@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Termini
 
 /// A bidirectional byte channel carrying a `tmux -C` control-mode stream.
@@ -21,15 +22,22 @@ protocol ControlChannel: AnyObject {
     func stop()
 }
 
-/// A live terminal surface workspace (one attached tmux session). macOS uses
-/// Termini's local-PTY workspace; iOS an SSH-backed one.
+/// A live terminal surface workspace (one attached tmux session). Each
+/// workspace supplies its own renderer view: macOS uses Termini/libghostty;
+/// iOS uses a SwiftTerm-backed view over SSH (libghostty's iOS glyph pipeline
+/// isn't usable yet — confirmed broken on device as well as simulator).
 @MainActor
 protocol TerminalWorkspace: AnyObject {
-    var controller: TerminiTerminalController { get }
     var terminalSize: TerminiTerminalSize? { get }
     func start()
     func stop()
     func resize(columns: Int, rows: Int)
+    /// Route keyboard focus to this surface (after selection).
+    func focus()
+    /// The rendered terminal view for this workspace. Called on every SwiftUI
+    /// update — must return a view over persistent state (the terminal engine
+    /// lives in the workspace, not the returned value).
+    func makeSurfaceView(fontSize: Double?, isVisible: Bool) -> AnyView
 }
 
 /// Outcome of a Claude-hooks management operation (mirrors ClaudeHooks.Outcome,

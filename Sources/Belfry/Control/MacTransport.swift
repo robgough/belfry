@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Termini
 
 // macOS side of the transport seam: `TmuxTransport` (local tmux binary, or the
@@ -112,6 +113,23 @@ extension TmuxTransport: HostTransport {
 extension TerminiLocalPTYWorkspace: TerminalWorkspace {
     func resize(columns: Int, rows: Int) {
         resize(to: .init(columns: columns, rows: rows))
+    }
+
+    func focus() {
+        controller.focus()
+    }
+
+    func makeSurfaceView(fontSize: Double?, isVisible: Bool) -> AnyView {
+        AnyView(
+            TerminiTerminalView(controller: controller,
+                                appearance: TerminiTerminalAppearance(
+                                    theme: SurfaceTheme.theme,
+                                    fontSize: fontSize,
+                                    extraConfigFilePaths: SurfaceTheme.configFilePaths),
+                                // Hidden warm surfaces keep absorbing output but stop
+                                // rendering entirely (battery) — see LOCAL_PATCHES.md.
+                                isRenderVisible: isVisible)
+        )
     }
 }
 

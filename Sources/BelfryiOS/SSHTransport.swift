@@ -1,6 +1,9 @@
 import Foundation
+import SwiftTerm
+import SwiftUI
 import Termini
 import TerminiSSH
+import UIKit
 
 // iOS side of the transport seam: no process spawning exists here, so both the
 // control plane and every terminal surface ride library SSH (TerminiSSH /
@@ -128,28 +131,31 @@ final class SSHControlChannel: ControlChannel {
     }
 }
 
-/// A terminal surface attached to one tmux session over SSH. Unlike Termini's
-/// stock SSH workspace this forwards view size changes to the remote PTY
-/// (window-change requests), so tmux always matches the rendered grid.
+/// A terminal surface attached to one tmux session over SSH, rendered by
+/// SwiftTerm. (libghostty's iOS glyph pipeline draws empty atlases — verified
+/// on device and simulator — so iOS uses SwiftTerm's CoreText renderer behind
+/// the same TerminalWorkspace seam; macOS keeps libghostty.)
+///
+/// The SwiftTerm view is created once and owned here, so terminal state
+/// survives SwiftUI remounts; remote bytes bypass the Termini controller via
+/// the session's raw-output sink and feed SwiftTerm directly.
 @MainActor
-final class BelfrySSHWorkspace: TerminalWorkspace {
-    let controller = TerminiTerminalController()
+final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     private let session: TerminiSSHSession
     private let configuration: TerminiSSHConfiguration
+    let terminalView = SwiftTerm.TerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
     private(set) var terminalSize: TerminiTerminalSize?
 
     init(configuration: TerminiSSHConfiguration) {
         self.configuration = configuration
-        self.session = TerminiSSHSession(controller: controller)
-        controller.onSizeChange = { [weak self] size in
-            self?.terminalSize = size
-            self?.session.updateTerminalSize(size)
+        // The controller is a required-but-unused mailbox (raw sink bypasses it).
+        self.session = TerminiSSHSession(controller: TerminiTerminalController())
+        super.init()
+        terminalView.terminalDelegate = self
+        applyTheme()
+        session.onRawOutput = { [weak self] data in
+            self?.terminalView.feed(byteArray: ArraySlice([UInt8](data)))
         }
-        #if DEBUG
-        controller.onDiagnosticsChange = { diagnostics in
-            NSLog("[BelfrySSH] surface diagnostics: %@", diagnostics.summary)
-        }
-        #endif
     }
 
     func start() {
@@ -165,7 +171,84 @@ final class BelfrySSHWorkspace: TerminalWorkspace {
         session.updateTerminalSize(TerminiTerminalSize(
             columns: columns,
             rows: rows,
-            cellWidthPixels: terminalSize?.cellWidthPixels ?? 0,
-            cellHeightPixels: terminalSize?.cellHeightPixels ?? 0))
+            cellWidthPixels: 0,
+            cellHeightPixels: 0))
+    }
+
+    func focus() {
+        _ = terminalView.becomeFirstResponder()
+    }
+
+    func makeSurfaceView(fontSize: Double?, isVisible: Bool) -> AnyView {
+        AnyView(SwiftTermSurface(terminalView: terminalView, fontSize: fontSize))
+    }
+
+    /// Match the shared resolved theme (Catppuccin fallback on iOS, since
+    /// there's no Ghostty config to read here).
+    private func applyTheme() {
+        let theme = GhosttyThemeReader.resolved
+        terminalView.installColors(theme.palette.map(Self.termColor))
+        terminalView.nativeBackgroundColor = Self.uiColor(theme.background)
+        terminalView.nativeForegroundColor = Self.uiColor(theme.foreground)
+        terminalView.caretColor = Self.uiColor(theme.cursor)
+        terminalView.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    }
+
+    private static func termColor(_ hex: UInt32) -> SwiftTerm.Color {
+        SwiftTerm.Color(
+            red: UInt16((hex >> 16) & 0xFF) * 257,
+            green: UInt16((hex >> 8) & 0xFF) * 257,
+            blue: UInt16(hex & 0xFF) * 257)
+    }
+
+    private static func uiColor(_ hex: UInt32) -> UIColor {
+        UIColor(
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1)
+    }
+}
+
+extension BelfrySSHWorkspace: TerminalViewDelegate {
+    nonisolated func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
+        let bytes = Data(data)
+        Task { @MainActor [weak self] in
+            self?.session.send(bytes)
+        }
+    }
+
+    nonisolated func sizeChanged(source: SwiftTerm.TerminalView, newCols: Int, newRows: Int) {
+        guard newCols > 0, newRows > 0 else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let size = TerminiTerminalSize(
+                columns: newCols, rows: newRows, cellWidthPixels: 0, cellHeightPixels: 0)
+            self.terminalSize = size
+            self.session.updateTerminalSize(size)
+        }
+    }
+
+    nonisolated func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) {}
+    nonisolated func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
+    nonisolated func scrolled(source: SwiftTerm.TerminalView, position: Double) {}
+    nonisolated func requestOpenLink(source: SwiftTerm.TerminalView, link: String, params: [String: String]) {}
+    nonisolated func clipboardCopy(source: SwiftTerm.TerminalView, content: Data) {}
+    nonisolated func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {}
+    nonisolated func bell(source: SwiftTerm.TerminalView) {}
+}
+
+/// Mounts the workspace's persistent SwiftTerm view into SwiftUI.
+private struct SwiftTermSurface: UIViewRepresentable {
+    let terminalView: SwiftTerm.TerminalView
+    let fontSize: Double?
+
+    func makeUIView(context: Context) -> SwiftTerm.TerminalView { terminalView }
+
+    func updateUIView(_ uiView: SwiftTerm.TerminalView, context: Context) {
+        let size = CGFloat(fontSize ?? 13)
+        if uiView.font.pointSize != size {
+            uiView.font = UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        }
     }
 }
