@@ -55,7 +55,7 @@ struct TerminalDetailView: View {
 /// A single warm terminal surface. Stays mounted while its session is activated,
 /// so it never re-attaches; only its visibility changes when switching.
 private struct WarmSurface: View {
-    let workspace: TerminiLocalPTYWorkspace
+    let workspace: any TerminalWorkspace
     let fontSize: Double?
     let isVisible: Bool
 
@@ -64,6 +64,7 @@ private struct WarmSurface: View {
                             appearance: TerminiTerminalAppearance(
                                 theme: SurfaceTheme.theme,
                                 fontSize: fontSize,
+                                fontFamily: Self.fontFamily,
                                 extraConfigFilePaths: SurfaceTheme.configFilePaths),
                             // Hidden warm surfaces keep absorbing output but stop
                             // rendering entirely (battery) — see LOCAL_PATCHES.md.
@@ -76,9 +77,22 @@ private struct WarmSurface: View {
                 // size, then reflowed) with a one-shot winsize nudge.
                 try? await Task.sleep(for: .milliseconds(350))
                 guard let size = workspace.terminalSize else { return }
-                workspace.resize(to: .init(columns: size.columns, rows: max(1, size.rows - 1)))
+                workspace.resize(columns: size.columns, rows: max(1, size.rows - 1))
                 try? await Task.sleep(for: .milliseconds(40))
-                workspace.resize(to: .init(columns: size.columns, rows: size.rows))
+                workspace.resize(columns: size.columns, rows: size.rows)
             }
+    }
+
+    /// libghostty's default font discovery renders empty glyphs on iOS (cell
+    /// metrics resolve but the atlas stays blank — colored boxes instead of
+    /// text). Pinning an explicit system monospace face makes the config path
+    /// rebuild the font grid, which populates the atlas. macOS keeps ghostty's
+    /// own default resolution.
+    private static var fontFamily: TerminiTerminalFontFamily? {
+        #if os(iOS)
+        TerminiTerminalFontFamily(name: "Menlo")
+        #else
+        nil
+        #endif
     }
 }

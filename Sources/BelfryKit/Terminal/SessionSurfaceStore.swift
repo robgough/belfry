@@ -7,16 +7,17 @@ import Termini
 @MainActor
 @Observable
 final class SessionSurfaceStore {
-    private let transport: TmuxTransport
+    /// Builds a platform workspace attached to the named tmux session.
+    private let makeWorkspace: (String) -> any TerminalWorkspace
     /// Ordered list of activated session ids, for a stable ForEach in the detail.
     private(set) var activatedSessionIDs: [String] = []
-    private var workspaces: [String: TerminiLocalPTYWorkspace] = [:]
+    private var workspaces: [String: any TerminalWorkspace] = [:]
 
-    init(transport: TmuxTransport) {
-        self.transport = transport
+    init(makeWorkspace: @escaping (String) -> any TerminalWorkspace) {
+        self.makeWorkspace = makeWorkspace
     }
 
-    func workspace(for sessionID: String) -> TerminiLocalPTYWorkspace? {
+    func workspace(for sessionID: String) -> (any TerminalWorkspace)? {
         workspaces[sessionID]
     }
 
@@ -24,10 +25,7 @@ final class SessionSurfaceStore {
     /// The surface is *started* by its view's `.task` (tied to view lifecycle).
     func activate(sessionID: String, sessionName: String) {
         guard workspaces[sessionID] == nil else { return }
-        let workspace = TerminiLocalPTYWorkspace(
-            processSpec: transport.tmuxProcessSpec(["new-session", "-A", "-s", sessionName])
-        )
-        workspaces[sessionID] = workspace
+        workspaces[sessionID] = makeWorkspace(sessionName)
         activatedSessionIDs.append(sessionID)
     }
 

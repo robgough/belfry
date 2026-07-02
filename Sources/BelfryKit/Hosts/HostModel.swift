@@ -15,16 +15,16 @@ enum HookStatus: Equatable {
 /// host owns its own control-mode link, session tree, and warm surfaces.
 ///
 /// Connection lifecycle: `start()`/`reconnect()` set `wantsConnection`, and any
-/// unexpected exit of the control process while we still want a connection
+/// unexpected exit of the control channel while we still want a connection
 /// triggers a backoff reconnect. `disconnect()` clears the intent and tears the
-/// link + surfaces down. The `ControlModeClient` (and its PTY process) is one-shot,
+/// link + surfaces down. The `ControlModeClient` (and its channel) is one-shot,
 /// so each (re)connect builds a fresh one.
 @MainActor
 @Observable
 final class HostModel: Identifiable {
-    let id: String          // "local" or the ssh alias
+    let id: String          // "local" or the ssh alias / saved-host id
     let displayName: String
-    let transport: TmuxTransport
+    let transport: any HostTransport
     let store = TmuxStore()
     let surfaceStore: SessionSurfaceStore
     private(set) var client: ControlModeClient
@@ -52,28 +52,25 @@ final class HostModel: Identifiable {
     private(set) var hooksStatus: HookStatus = .unknown
     private var didCheckHooks = false
 
-    init(id: String, displayName: String, transport: TmuxTransport) {
+    init(id: String, displayName: String, transport: any HostTransport) {
         self.id = id
         self.displayName = displayName
         self.transport = transport
-        self.surfaceStore = SessionSurfaceStore(transport: transport)
+        self.surfaceStore = SessionSurfaceStore { sessionName in
+            transport.makeSurfaceWorkspace(sessionName: sessionName)
+        }
         self.client = ControlModeClient(
-            store: store, transport: transport, controlSessionName: controlSessionName)
+            store: store,
+            channel: transport.makeControlChannel(controlSessionName: controlSessionName),
+            controlSessionName: controlSessionName)
         wireClient()
-    }
-
-    static func local() -> HostModel {
-        HostModel(id: "local", displayName: "Local", transport: .local)
-    }
-
-    static func ssh(alias: String, displayName: String? = nil) -> HostModel {
-        // Default label is the first DNS label (e.g. "magrathea" from "magrathea.x.ts.net").
-        let name = displayName ?? alias.split(separator: ".").first.map(String.init) ?? alias
-        return HostModel(id: alias, displayName: name, transport: .ssh(alias: alias))
     }
 
     /// The local host is always meant to be connected and offers no disconnect.
     var canDisconnect: Bool { !transport.isLocal }
+
+    /// Whether this host supports Claude-hooks management (macOS transports do).
+    var supportsHooksManagement: Bool { transport.hooksManager != nil }
 
     // MARK: Lifecycle
 
@@ -98,9 +95,9 @@ final class HostModel: Identifiable {
         surfaceStore.teardownAll()
         store.clear()
         store.status = .offline
-        // Drop the shared SSH master so a later Connect re-authenticates (lets you
-        // re-enter a password) rather than silently reusing the cached connection.
-        if let alias = transport.sshAlias { SSHControl.closeMaster(alias: alias) }
+        // Drop cached auth so a later Connect re-authenticates (lets you re-enter
+        // a password) rather than silently reusing a cached connection.
+        transport.invalidateAuthentication {}
     }
 
     /// Reconnect now (also used by the UI's "Connect" on an offline host). This is
@@ -113,17 +110,11 @@ final class HostModel: Identifiable {
         everConnected = false       // fresh cold-attempt window for a manual retry
         lastFailureReason = nil
         store.status = .connecting
-        // A *manual* retry should re-authenticate: close the shared SSH master
-        // first so ssh prompts again (e.g. to fix a mistyped password), then
-        // connect. Silent auto-reconnects skip this and reuse the master.
-        if let alias = transport.sshAlias {
-            SSHControl.closeMaster(alias: alias) { [weak self] in
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.rebuildClientAndStart(ensureSession: true) }
-                }
-            }
-        } else {
-            rebuildClientAndStart(ensureSession: true)
+        // A *manual* retry should re-authenticate: drop cached auth first so the
+        // next connect prompts again (e.g. to fix a mistyped password), then
+        // connect. Silent auto-reconnects skip this and reuse cached auth.
+        transport.invalidateAuthentication { [weak self] in
+            self?.rebuildClientAndStart(ensureSession: true)
         }
     }
 
@@ -135,6 +126,28 @@ final class HostModel: Identifiable {
         client.onExitHandler = nil
         client.stop()
         surfaceStore.teardownAll()
+    }
+
+    /// App moved to the background (iOS): drop the live connections quietly but
+    /// keep the intent, so `resumeIfWanted()` restores everything on foreground.
+    /// Sessions live in the tmux server; only our links are torn down.
+    func suspend() {
+        guard wantsConnection else { return }
+        reconnectWork?.cancel()
+        reconnectWork = nil
+        client.onExitHandler = nil
+        client.stop()
+        surfaceStore.teardownAll()
+        store.clear()
+        store.status = .disconnected("suspended")
+    }
+
+    /// Foreground again (iOS): reconnect hosts whose intent survived suspension.
+    func resumeIfWanted() {
+        guard wantsConnection else { return }
+        reconnectAttempts = 0
+        store.status = .connecting
+        rebuildClientAndStart(ensureSession: false)
     }
 
     // MARK: Reconnect plumbing
@@ -197,9 +210,7 @@ final class HostModel: Identifiable {
     }
 
     /// Short, user-facing reason for a failed connect. Prefers the actual ssh/tmux
-    /// diagnostic; otherwise a generic hint. Password hosts no longer land here —
-    /// the askpass dialog handles them — so this is real failure (wrong password,
-    /// unreachable host, tmux missing, …).
+    /// diagnostic; otherwise a generic hint.
     private var failureMessage: String {
         guard let reason = lastFailureReason?.trimmingCharacters(in: .whitespacesAndNewlines),
               !reason.isEmpty else {
@@ -216,7 +227,9 @@ final class HostModel: Identifiable {
         // process to die by deinit timing. No-op if it already exited.
         client.stop()
         client = ControlModeClient(
-            store: store, transport: transport, controlSessionName: controlSessionName)
+            store: store,
+            channel: transport.makeControlChannel(controlSessionName: controlSessionName),
+            controlSessionName: controlSessionName)
         wireClient()
         client.ensureSessionOnConnect = ensureSession
         client.start()
@@ -226,32 +239,35 @@ final class HostModel: Identifiable {
 
     /// Check once automatically after the first successful connect.
     private func checkHooksIfNeeded() {
-        guard !didCheckHooks else { return }
+        guard !didCheckHooks, supportsHooksManagement else { return }
         didCheckHooks = true
         checkHooks()
     }
 
     func checkHooks() {
         hooksStatus = .checking
-        runHookIO { ClaudeHooks.check($0) }
+        runHookIO { $0.check() }
     }
 
     func installHooks() {
         hooksStatus = .installing
-        runHookIO { ClaudeHooks.install($0) }
+        runHookIO { $0.install() }
     }
 
     func removeHooks() {
         hooksStatus = .removing
-        runHookIO { ClaudeHooks.remove($0) }
+        runHookIO { $0.remove() }
     }
 
-    /// Run a blocking ClaudeHooks call off the main thread, then fold the result
+    /// Run a blocking hooks call off the main thread, then fold the result
     /// back into `hooksStatus`.
-    private func runHookIO(_ work: @escaping (TmuxTransport) -> ClaudeHooks.Outcome) {
-        let transport = self.transport
+    private func runHookIO(_ work: @escaping @Sendable (any HooksManaging) -> HooksOutcome) {
+        guard let manager = transport.hooksManager else {
+            hooksStatus = .unknown
+            return
+        }
         DispatchQueue.global().async { [weak self] in
-            let outcome = work(transport)
+            let outcome = work(manager)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     switch outcome {

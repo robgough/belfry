@@ -1,6 +1,15 @@
 import Foundation
 import Termini
 
+/// Resolves the tmux binary once.
+enum Tmux {
+    static let executablePath: String = {
+        let candidates = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+            ?? "/opt/homebrew/bin/tmux"
+    }()
+}
+
 /// How to reach a tmux server: locally, or over SSH to a host alias.
 enum TmuxTransport: Hashable, Sendable {
     case local

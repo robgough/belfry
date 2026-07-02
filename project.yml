@@ -1,0 +1,39 @@
+# xcodegen manifest for the iOS app target. The macOS app stays pure SPM
+# (`swift build` / scripts/make_app.sh); this exists only because SPM can't
+# produce iOS app bundles. Regenerate the project with:
+#     xcodegen generate
+# then build/run BelfryiOS in Xcode (add your team for device installs) or:
+#     xcodebuild -project BelfryiOS.xcodeproj -scheme BelfryiOS \
+#       -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' build
+name: BelfryiOS
+options:
+  bundleIdPrefix: net.robgough
+packages:
+  Termini:
+    path: vendor/Termini
+targets:
+  BelfryiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      # BelfryKit is the shared core, compiled directly into each app target
+      # (single module per app — see Package.swift for the macOS twin).
+      - Sources/BelfryKit
+      - Sources/BelfryiOS
+    dependencies:
+      - package: Termini
+        product: Termini
+      - package: Termini
+        product: TerminiSSH
+    settings:
+      base:
+        PRODUCT_NAME: Belfry
+        PRODUCT_BUNDLE_IDENTIFIER: net.robgough.belfry.ios
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        CODE_SIGN_STYLE: Automatic

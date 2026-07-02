@@ -1,5 +1,30 @@
 import SwiftUI
 
+/// `.help()` tooltips exist on macOS only; elsewhere this is a no-op.
+extension View {
+    @ViewBuilder
+    func hoverHint(_ text: String) -> some View {
+        #if os(macOS)
+        help(text)
+        #else
+        self
+        #endif
+    }
+}
+
+/// A small inline text button (`.link` style on macOS, plain elsewhere).
+private struct InlineLinkButton: View {
+    let title: String
+    let action: () -> Void
+    var body: some View {
+        #if os(macOS)
+        Button(title, action: action).buttonStyle(.link).font(.caption)
+        #else
+        Button(title, action: action).font(.caption)
+        #endif
+    }
+}
+
 /// Left sidebar: a Host → Session → Window tree. Each host is a collapsible
 /// section; sessions list their windows beneath. Window rows are the selectable
 /// leaves (tagged with their host + window id). Right-click rows for actions;
@@ -71,8 +96,11 @@ private struct HostHeader: View {
 
     /// Claude-status-hook state + install action for this host.
     @ViewBuilder private var claudeHooksItems: some View {
+        // Transports without a hooks manager (iOS, for now) hide this entirely.
+        if !host.supportsHooksManagement {
+            EmptyView()
         // Managing remote hooks needs the SSH link; local always works.
-        if !(host.transport.isLocal || host.store.status.isLive) {
+        } else if !(host.transport.isLocal || host.store.status.isLive) {
             Button("Claude status hooks (connect to manage)") {}.disabled(true)
         } else {
             switch host.hooksStatus {
@@ -161,7 +189,7 @@ private struct HostIconChip: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(tint)
             )
-            .help(statusText)
+            .hoverHint(statusText)
     }
     private var tint: Color {
         switch status {
@@ -194,7 +222,7 @@ private struct AttachDot: View {
                     lineWidth: 1.2)
             )
             .frame(width: 7, height: 7)
-            .help(isAttached ? "Attached (a client is on this session)" : "Not attached")
+            .hoverHint(isAttached ? "Attached (a client is on this session)" : "Not attached")
     }
 }
 
@@ -215,14 +243,12 @@ private struct HostStatusRow: View {
             HStack(spacing: 6) {
                 Label(reason, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
-                Button("Reconnect") { host.reconnect() }
-                    .buttonStyle(.link).font(.caption)
+                InlineLinkButton(title: "Reconnect") { host.reconnect() }
             }
         case .offline:
             HStack(spacing: 6) {
                 Text("Disconnected").font(.caption).foregroundStyle(.secondary)
-                Button("Connect") { host.reconnect() }
-                    .buttonStyle(.link).font(.caption)
+                InlineLinkButton(title: "Connect") { host.reconnect() }
             }
         }
     }
@@ -261,13 +287,13 @@ private struct WindowRow: View {
                     Image(systemName: "bell.fill")
                         .font(.system(size: 9))
                         .foregroundStyle(.yellow)
-                        .help("Bell rang in this window")
+                        .hoverHint("Bell rang in this window")
                 }
                 if window.claudeState != .none {
                     ClaudeBadge(state: window.claudeState)
                 } else if window.hasActivity {
                     Circle().fill(Color.orange).frame(width: 5, height: 5)
-                        .help("Unseen activity")
+                        .hoverHint("Unseen activity")
                 }
             }
         }
@@ -322,9 +348,23 @@ private struct ClaudeBadge: View {
         .padding(.horizontal, 5)
         .padding(.vertical, 1.5)
         .background(Capsule().fill(color.opacity(0.14)))
-        .help(help)
+        .hoverHint(help)
     }
 }
+
+/// The repeating badge animation, shared by both platforms: a CABasicAnimation
+/// breathing a layer's opacity between 1 and 0.35.
+private func makePulseAnimation() -> CABasicAnimation {
+    let animation = CABasicAnimation(keyPath: "opacity")
+    animation.fromValue = 1.0
+    animation.toValue = 0.35
+    animation.duration = 0.7
+    animation.autoreverses = true
+    animation.repeatCount = .infinity
+    return animation
+}
+
+#if canImport(AppKit)
 
 /// A pulsing SF Symbol, animated for free. `.symbolEffect(.pulse, .repeating)`
 /// is frame-driven in-process like every per-frame SwiftUI update (measured
@@ -368,13 +408,7 @@ private struct PulsingIcon: NSViewRepresentable {
             super.viewDidMoveToWindow()
             guard window != nil, let layer = imageView.layer else { return }
             guard layer.animation(forKey: "belfry.pulse") == nil else { return }
-            let animation = CABasicAnimation(keyPath: "opacity")
-            animation.fromValue = 1.0
-            animation.toValue = 0.35
-            animation.duration = 0.7
-            animation.autoreverses = true
-            animation.repeatCount = .infinity
-            layer.add(animation, forKey: "belfry.pulse")
+            layer.add(makePulseAnimation(), forKey: "belfry.pulse")
         }
     }
 }
@@ -453,3 +487,109 @@ private struct BrailleSpinner: NSViewRepresentable {
         }
     }
 }
+
+#else  // UIKit — same render-server animations, UIView-hosted.
+
+/// iOS twin of the macOS PulsingIcon (see that doc comment for the why).
+private struct PulsingIcon: UIViewRepresentable {
+    let systemName: String
+    let color: Color
+
+    func makeUIView(context: Context) -> IconView { IconView(systemName: systemName, color: UIColor(color)) }
+    func updateUIView(_ uiView: IconView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: IconView, context: Context) -> CGSize? {
+        IconView.iconSize
+    }
+
+    final class IconView: UIView {
+        static let iconSize = CGSize(width: 12, height: 12)
+        private let imageView = UIImageView()
+
+        init(systemName: String, color: UIColor) {
+            super.init(frame: CGRect(origin: .zero, size: Self.iconSize))
+            let config = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+            imageView.image = UIImage(systemName: systemName, withConfiguration: config)
+            imageView.tintColor = color
+            imageView.contentMode = .scaleAspectFit
+            imageView.frame = bounds
+            imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            addSubview(imageView)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override var intrinsicContentSize: CGSize { Self.iconSize }
+
+        // CA strips animations from a layer that leaves the hierarchy, so
+        // (re)install whenever we land in a window.
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            let layer = imageView.layer
+            guard layer.animation(forKey: "belfry.pulse") == nil else { return }
+            layer.add(makePulseAnimation(), forKey: "belfry.pulse")
+        }
+    }
+}
+
+/// iOS twin of the macOS BrailleSpinner (see that doc comment for the why).
+private struct BrailleSpinner: UIViewRepresentable {
+    let color: Color
+
+    func makeUIView(context: Context) -> SpinnerView { SpinnerView(color: UIColor(color)) }
+    func updateUIView(_ uiView: SpinnerView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: SpinnerView, context: Context) -> CGSize? {
+        SpinnerView.glyphSize
+    }
+
+    final class SpinnerView: UIView {
+        private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        private static let frameInterval = 0.125
+        static let glyphSize = CGSize(width: 8, height: 12)
+        private let images: [CGImage]
+
+        init(color: UIColor) {
+            images = Self.renderFrames(color: color)
+            super.init(frame: CGRect(origin: .zero, size: Self.glyphSize))
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override var intrinsicContentSize: CGSize { Self.glyphSize }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            layer.contentsScale = 2
+            guard layer.animation(forKey: "belfry.spin") == nil else { return }
+            let animation = CAKeyframeAnimation(keyPath: "contents")
+            animation.values = images
+            animation.calculationMode = .discrete
+            animation.duration = Double(images.count) * Self.frameInterval
+            animation.repeatCount = .infinity
+            layer.add(animation, forKey: "belfry.spin")
+        }
+
+        /// Draw each braille frame once into a 2x bitmap tinted `color`.
+        private static func renderFrames(color: UIColor) -> [CGImage] {
+            let scale: CGFloat = 2
+            let size = CGSize(width: glyphSize.width * scale, height: glyphSize.height * scale)
+            let font = UIFont.monospacedSystemFont(ofSize: 10 * scale, weight: .regular)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = false
+            let renderer = UIGraphicsImageRenderer(size: size, format: format)
+            return frames.compactMap { glyph in
+                renderer.image { _ in
+                    (glyph as NSString).draw(
+                        at: .zero,
+                        withAttributes: [.font: font, .foregroundColor: color])
+                }.cgImage
+            }
+        }
+    }
+}
+
+#endif

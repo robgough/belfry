@@ -1,9 +1,19 @@
 import Foundation
 
 /// A user-added SSH host, persisted across launches.
+///
+/// macOS entries carry only `alias` (an ~/.ssh/config alias or user@host that
+/// the system ssh binary resolves). iOS has no ssh binary or ssh config, so
+/// its entries spell out the endpoint + auth method; the secret itself
+/// (password or private key) lives in the Keychain under `alias`, never here.
 struct SavedHost: Codable, Hashable {
     let alias: String
     var displayName: String?
+    // Library-SSH (iOS) fields; nil for macOS-created entries.
+    var hostname: String?
+    var port: Int?
+    var username: String?
+    var authMethod: String?     // "password" | "key"
 }
 
 /// Reads/writes the saved SSH host list as JSON under Application Support.

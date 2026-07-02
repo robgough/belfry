@@ -5,7 +5,17 @@ import Darwin
 @main
 struct BelfryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = AppModel()
+    @State private var model = BelfryApp.bootstrapModel()
+
+    /// Local host + saved ssh aliases, with the SSH socket dir ready.
+    private static func bootstrapModel() -> AppModel {
+        SSHControl.ensureSocketDir()
+        var hosts: [HostModel] = [.local()]
+        for saved in HostPersistence.load() {
+            hosts.append(.ssh(alias: saved.alias, displayName: saved.displayName))
+        }
+        return AppModel(hosts: hosts)
+    }
 
     var body: some Scene {
         // A single, unique window (not a WindowGroup): ⌘N can't spawn a second
@@ -32,106 +42,9 @@ struct BelfryApp: App {
     }
 }
 
-/// Owns the hosts (each with its own control-mode connection) + UI prefs, plus
-/// host add/remove and persistence.
-@MainActor
-@Observable
-final class AppModel {
-    /// For the app delegate's quit-time cleanup hook.
-    static private(set) weak var current: AppModel?
-
-    private(set) var hosts: [HostModel]
-
-    /// Terminal font size in points; nil = libghostty's default. Applied to all
-    /// session surfaces.
-    var fontSize: Double?
-
-    init() {
-        SSHControl.ensureSocketDir()
-        var hosts: [HostModel] = [.local()]
-        for saved in HostPersistence.load() {
-            hosts.append(.ssh(alias: saved.alias, displayName: saved.displayName))
-        }
-        self.hosts = hosts
-        AppModel.current = self
-    }
-
-    func startAll() { hosts.forEach { $0.start() } }
-
-    /// Hosts that can currently host a new session (their link is live).
-    var connectedHosts: [HostModel] { hosts.filter { $0.store.status.isLive } }
-
-    /// Number of windows across all hosts where Claude is waiting for you — drives
-    /// the Dock badge so you notice while Belfry is in the background.
-    var attentionCount: Int {
-        hosts.reduce(0) { total, host in
-            total + host.store.sessions.reduce(0) { sum, session in
-                sum + session.windows.filter { $0.claudeState.needsAttention }.count
-            }
-        }
-    }
-
-    // MARK: Host management
-
-    @discardableResult
-    func addHost(alias: String, displayName: String? = nil) -> HostModel? {
-        let alias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Self.isValidSSHAlias(alias), !hosts.contains(where: { $0.id == alias }) else { return nil }
-        let host = HostModel.ssh(alias: alias, displayName: displayName)
-        hosts.append(host)
-        persist()
-        host.start()
-        return host
-    }
-
-    /// The alias is passed to ssh as its own argv element, so reject anything
-    /// ssh would parse as an *option* (leading "-", e.g. "-oProxyCommand=…")
-    /// or that can't be a real alias/user@host (whitespace, quotes, non-ASCII
-    /// control forms). ssh has no "--" end-of-options marker, so validating
-    /// here is the only guard.
-    static func isValidSSHAlias(_ alias: String) -> Bool {
-        guard !alias.isEmpty, !alias.hasPrefix("-") else { return false }
-        return alias.allSatisfy { char in
-            char.isASCII && !char.isWhitespace && char != "'" && char != "\"" && char != "\\"
-        }
-    }
-
-    func removeHost(_ host: HostModel) {
-        guard host.canDisconnect else { return }   // never remove Local
-        host.shutdown()
-        hosts.removeAll { $0.id == host.id }
-        persist()
-    }
-
-    private func persist() {
-        let saved = hosts.compactMap { host -> SavedHost? in
-            guard let alias = host.transport.sshAlias else { return nil }
-            return SavedHost(alias: alias, displayName: host.displayName)
-        }
-        HostPersistence.save(saved)
-    }
-
-    /// Tear down every host and reap server-side leftovers (called at quit).
-    func shutdownAll() {
-        qlog("shutdownAll BEGIN (\(hosts.count) hosts)")
-        let targets = hosts.filter { $0.wantsConnection }.map {
-            QuitCleanup.Target(transport: $0.transport, controlSession: $0.controlSessionName)
-        }
-        hosts.forEach { $0.shutdown() }
-        qlog("shutdownAll: hosts torn down; running QuitCleanup (\(targets.count) targets)")
-        QuitCleanup.run(targets: targets)
-        qlog("shutdownAll END")
-    }
-
-    // MARK: Font
-
-    private let baseFontSize: Double = 13
-    func increaseFont() { fontSize = min((fontSize ?? baseFontSize) + 1, 36) }
-    func decreaseFont() { fontSize = max((fontSize ?? baseFontSize) - 1, 8) }
-    // Reset to an explicit base (not nil): the nil → `reset_font_size` path in
-    // Termini doesn't reliably re-apply, whereas `set_font_size` does.
-    func resetFont() { fontSize = baseFontSize }
-}
+// AppModel now lives in BelfryKit (shared with iOS); the macOS-specific
+// pieces — ssh-alias add-host and quit-time server cleanup — are extensions
+// in MacTransport.swift.
 
 struct RootView: View {
     let model: AppModel
@@ -253,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // force-exiting here is safe: worst case a control session is left to reap.
         Self.armQuitWatchdog(after: 1.5)
         MainActor.assumeIsolated {
-            AppModel.current?.shutdownAll()
+            AppModel.current?.shutdownAllWithCleanup()
         }
         qlog("applicationWillTerminate END (shutdownAll returned)")
     }

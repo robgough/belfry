@@ -1,14 +1,4 @@
 import Foundation
-import Termini
-
-/// Resolves the tmux binary once.
-enum Tmux {
-    static let executablePath: String = {
-        let candidates = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-            ?? "/opt/homebrew/bin/tmux"
-    }()
-}
 
 /// Drives a persistent `tmux -C` control-mode connection and keeps a `TmuxStore`
 /// in sync with the whole server.
@@ -31,8 +21,8 @@ enum Tmux {
 ///   parse by line-prefix and skip fragile command↔response correlation.
 final class ControlModeClient {
     private let store: TmuxStore
-    private let transport: TmuxTransport
-    private let process = TerminiLocalPTYProcess()
+    /// Platform byte channel to the control-mode tmux (PTY on macOS, SSH on iOS).
+    private let channel: any ControlChannel
 
     /// Called with the current living session ids after each session-list refresh
     /// (used to prune warm surfaces for sessions that have gone away).
@@ -127,19 +117,19 @@ final class ControlModeClient {
         + "#{W:#{window_id}#{window_index}#{window_active}#{window_activity_flag}"
         + "#{window_bell_flag}#{pane_current_command}#{@claude_state}#{window_name}|}~}"
 
-    init(store: TmuxStore, transport: TmuxTransport, controlSessionName: String) {
+    @MainActor
+    init(store: TmuxStore, channel: any ControlChannel, controlSessionName: String) {
         self.store = store
-        self.transport = transport
+        self.channel = channel
         self.controlSessionName = controlSessionName
-        process.onOutput = { [weak self] data in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.ingest(data) }
-            }
+        channel.onOutput = { [weak self] data in
+            self?.ingest(data)
         }
-        process.onExit = { [weak self] code in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.handleExit(code) }
-            }
+        channel.onReady = { [weak self] in
+            self?.beginProtocol()
+        }
+        channel.onExit = { [weak self] code in
+            self?.handleExit(code)
         }
     }
 
@@ -150,42 +140,25 @@ final class ControlModeClient {
         didReap = false
         lastDiagnostic = nil
         stopRequested = false
-        guard transport.isLocal else { startControlClient(); return }
-        // Make sure the LOCAL server is started by launchd (outside Belfry's coalition) so
-        // a Dock Force-Quit can't take it — then attach our control client to it. This is
-        // bounded (never blocks indefinitely), so we always reach startControlClient().
-        let session = controlSessionName
-        DispatchQueue.global().async { [weak self] in
-            LaunchdTmux.ensureLocalServer(controlSessionName: session)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, !self.stopRequested else { return }
-                    self.startControlClient()
-                }
-            }
-        }
+        channel.start()
     }
 
+    /// The channel is up (PTY spawned / SSH exec running): send the initial
+    /// protocol commands and arm the backstop poll.
     @MainActor
-    private func startControlClient() {
+    private func beginProtocol() {
         guard !stopRequested else { return }
-        let spec = transport.tmuxProcessSpec(["-C", "new-session", "-A", "-s", controlSessionName])
-        do {
-            try process.start(spec: spec, initialSize: .init(columns: 200, rows: 50))
-            send("refresh-client -C 200,50")
-            // Server-side change watching: tmux re-evaluates the format ~1/s in
-            // the server and pushes %subscription-changed only when the value
-            // differs — no client wakeups, PTY traffic, or (for SSH hosts)
-            // network chatter while nothing changes. Errors harmlessly on
-            // tmux < 3.2, in which case the fast poll below stays in charge.
-            send("refresh-client -B 'belfry-tree::\(Self.treeSubscriptionFormat)'")
-            refreshNow()
-            startRefreshTimer(interval: Self.fastRefreshInterval)
-            isStarted = true
-            clog("control client started")
-        } catch {
-            clog("control client failed to start: \(error.localizedDescription)")
-        }
+        send("refresh-client -C 200,50")
+        // Server-side change watching: tmux re-evaluates the format ~1/s in
+        // the server and pushes %subscription-changed only when the value
+        // differs — no client wakeups, PTY traffic, or (for SSH hosts)
+        // network chatter while nothing changes. Errors harmlessly on
+        // tmux < 3.2, in which case the fast poll below stays in charge.
+        send("refresh-client -B 'belfry-tree::\(Self.treeSubscriptionFormat)'")
+        refreshNow()
+        startRefreshTimer(interval: Self.fastRefreshInterval)
+        isStarted = true
+        clog("control client started")
     }
 
     /// (Re)start the periodic re-list. Generous tolerance lets the OS coalesce
@@ -207,7 +180,7 @@ final class ControlModeClient {
         refreshTimer?.invalidate()
         refreshTimer = nil
         isStarted = false
-        process.terminate()
+        channel.stop()
     }
 
     /// Make `windowID` (e.g. "@6") the active window of its session, server-side.
@@ -261,7 +234,7 @@ final class ControlModeClient {
 
     @MainActor
     private func send(_ command: String) {
-        process.send(Data((command + "\n").utf8))
+        channel.send(Data((command + "\n").utf8))
     }
 
     /// Re-query the full session + window list.

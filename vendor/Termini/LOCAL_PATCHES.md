@@ -68,3 +68,15 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
   `read()`. All bytes readable in a drain pass are now batched into a single
   callback (bounded at 128 KB per emission), collapsing hundreds of main-thread
   wakeups per second during output floods into a handful.
+
+- **`TerminiSSHSession.swift` — exec-request mode + raw output sink** (for
+  Belfry's iOS transport):
+  - `TerminiSSHConfiguration.useExecRequest` (default false): runs
+    `startupCommand` as an SSH *exec* channel request instead of typing it into
+    an interactive shell 180 ms after connect. Exec gives a clean byte stream —
+    no shell echo/prompt/rc noise, which a protocol channel (`tmux -C`) can't
+    tolerate — and a real exit status when the command dies.
+  - `onRawOutput: ((Data) -> Void)?`: when set, remote bytes (and `[Termini]`
+    status lines, so failure diagnostics flow too) bypass the terminal
+    controller entirely. Lets a control-plane client reuse the SSH session
+    machinery without pretending to be a rendered terminal.
