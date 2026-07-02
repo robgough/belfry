@@ -304,8 +304,7 @@ private struct ClaudeBadge: View {
         case .waiting:
             chip(text: "Waiting", color: .orange, weight: .semibold,
                  help: "Claude is waiting for your input") {
-                Image(systemName: "questionmark.circle.fill")
-                    .symbolEffect(.pulse, options: .repeating)
+                PulsingIcon(systemName: "questionmark.circle.fill", color: .orange)
             }
         }
     }
@@ -327,6 +326,59 @@ private struct ClaudeBadge: View {
     }
 }
 
+/// A pulsing SF Symbol, animated for free. `.symbolEffect(.pulse, .repeating)`
+/// is frame-driven in-process like every per-frame SwiftUI update (measured
+/// ~17% CPU for one badge); a `CABasicAnimation` on layer opacity runs
+/// entirely in the render server instead.
+private struct PulsingIcon: NSViewRepresentable {
+    let systemName: String
+    let color: Color
+
+    func makeNSView(context: Context) -> IconView { IconView(systemName: systemName, color: NSColor(color)) }
+    func updateNSView(_ nsView: IconView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: IconView, context: Context) -> CGSize? {
+        IconView.iconSize
+    }
+
+    final class IconView: NSView {
+        static let iconSize = NSSize(width: 12, height: 12)
+        private let imageView = NSImageView()
+
+        init(systemName: String, color: NSColor) {
+            super.init(frame: NSRect(origin: .zero, size: Self.iconSize))
+            wantsLayer = true
+            let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+                .applying(.init(paletteColors: [color]))
+            imageView.image = NSImage(systemSymbolName: systemName, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config)
+            imageView.frame = bounds
+            imageView.autoresizingMask = [.width, .height]
+            imageView.wantsLayer = true
+            addSubview(imageView)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override var intrinsicContentSize: NSSize { Self.iconSize }
+
+        // CA strips animations from a layer that leaves the hierarchy, so
+        // (re)install whenever we land in a window.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil, let layer = imageView.layer else { return }
+            guard layer.animation(forKey: "belfry.pulse") == nil else { return }
+            let animation = CABasicAnimation(keyPath: "opacity")
+            animation.fromValue = 1.0
+            animation.toValue = 0.35
+            animation.duration = 0.7
+            animation.autoreverses = true
+            animation.repeatCount = .infinity
+            layer.add(animation, forKey: "belfry.pulse")
+        }
+    }
+}
+
 /// The classic braille "processing" spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏), animated for free.
 ///
 /// Anything that updates SwiftUI state per frame (TimelineView Text swaps,
@@ -340,11 +392,14 @@ private struct BrailleSpinner: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SpinnerView { SpinnerView(color: NSColor(color)) }
     func updateNSView(_ nsView: SpinnerView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SpinnerView, context: Context) -> CGSize? {
+        SpinnerView.glyphSize
+    }
 
     final class SpinnerView: NSView {
         private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         private static let frameInterval = 0.125
-        private static let glyphSize = NSSize(width: 8, height: 12)
+        static let glyphSize = NSSize(width: 8, height: 12)
         private let images: [CGImage]
 
         init(color: NSColor) {
