@@ -24,6 +24,10 @@ targets:
       # (single module per app — see Package.swift for the macOS twin).
       - Sources/BelfryKit
       - Sources/BelfryiOS
+      # Maple Mono NF (OFL): nerd-font glyphs for prompts/TUIs. Registered at
+      # launch via CoreText (no Info.plist UIAppFonts needed).
+      - path: Resources/Fonts
+        buildPhase: resources
     dependencies:
       - package: Termini
         product: Termini

@@ -1,9 +1,22 @@
+import CoreText
 import SwiftUI
 
 @main
 struct BelfryiOSApp: App {
     @State private var model = BelfryiOSApp.bootstrapModel()
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        Self.registerBundledFonts()
+    }
+
+    /// Make the bundled Maple Mono NF faces available to UIFont (runtime
+    /// registration — simpler than UIAppFonts with a generated Info.plist).
+    private static func registerBundledFonts() {
+        for url in Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: nil) ?? [] {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+    }
 
     var body: some Scene {
         WindowGroup {

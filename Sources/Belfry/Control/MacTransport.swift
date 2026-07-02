@@ -86,16 +86,18 @@ extension TmuxTransport: HostTransport {
         TmuxHooksManager(transport: self)
     }
 
+    // `-u` on every client: a GUI-launched app has no LANG in its environment,
+    // and a non-UTF-8 tmux client gets every non-ASCII cell rewritten as `_`.
     func makeControlChannel(controlSessionName: String) -> any ControlChannel {
         PTYControlChannel(
-            spec: tmuxProcessSpec(["-C", "new-session", "-A", "-s", controlSessionName]),
+            spec: tmuxProcessSpec(["-u", "-C", "new-session", "-A", "-s", controlSessionName]),
             ensuresLocalServer: isLocal,
             controlSessionName: controlSessionName)
     }
 
     func makeSurfaceWorkspace(sessionName: String) -> any TerminalWorkspace {
         TerminiLocalPTYWorkspace(
-            processSpec: tmuxProcessSpec(["new-session", "-A", "-s", sessionName]))
+            processSpec: tmuxProcessSpec(["-u", "new-session", "-A", "-s", sessionName]))
     }
 
     func invalidateAuthentication(completion: @escaping @MainActor () -> Void) {

@@ -42,10 +42,15 @@ final class SSHHostTransport: HostTransport {
     }
 
     /// The exec request runs via the remote user's shell non-interactively, so
-    /// login-profile PATH additions (Homebrew tmux on a Mac host!) are absent.
-    /// Resolve tmux in-shell with the common fallback.
+    /// login-profile PATH additions (Homebrew tmux on a Mac host!) are absent —
+    /// resolve tmux in-shell with the common fallback. The bare environment
+    /// also has no locale: without `-u` tmux decides this client can't take
+    /// UTF-8 and rewrites every non-ASCII cell as `_` (emoji, nerd glyphs, ❯).
+    /// LANG is exported too so shells *inside* new sessions are UTF-8.
     static func tmuxCommand(_ args: String) -> String {
-        "TB=$(command -v tmux || echo /opt/homebrew/bin/tmux); exec \"$TB\" \(args)"
+        "TB=$(command -v tmux || echo /opt/homebrew/bin/tmux); "
+        + "export LANG=\"${LANG:-en_US.UTF-8}\"; "
+        + "exec \"$TB\" -u \(args)"
     }
 
     private func sshConfiguration(startupCommand: String) -> TerminiSSHConfiguration {
@@ -191,7 +196,14 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         terminalView.nativeBackgroundColor = Self.uiColor(theme.background)
         terminalView.nativeForegroundColor = Self.uiColor(theme.foreground)
         terminalView.caretColor = Self.uiColor(theme.cursor)
-        terminalView.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        terminalView.font = Self.terminalFont(size: 13)
+    }
+
+    /// Bundled Maple Mono NF (registered at launch) so nerd-font prompt/TUI
+    /// glyphs render; system monospace as the fallback if lookup fails.
+    static func terminalFont(size: CGFloat) -> UIFont {
+        UIFont(name: "MapleMono-NF-Regular", size: size)
+            ?? UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
     private static func termColor(_ hex: UInt32) -> SwiftTerm.Color {
@@ -248,7 +260,7 @@ private struct SwiftTermSurface: UIViewRepresentable {
     func updateUIView(_ uiView: SwiftTerm.TerminalView, context: Context) {
         let size = CGFloat(fontSize ?? 13)
         if uiView.font.pointSize != size {
-            uiView.font = UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
+            uiView.font = BelfrySSHWorkspace.terminalFont(size: size)
         }
     }
 }
