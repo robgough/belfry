@@ -110,6 +110,10 @@ extension TmuxTransport: HostTransport {
             }
         }
     }
+
+    func cleanUpOnRemoval() {
+        // Nothing stored: keys/passwords live in the user's ~/.ssh setup.
+    }
 }
 
 extension TerminiLocalPTYWorkspace: TerminalWorkspace {

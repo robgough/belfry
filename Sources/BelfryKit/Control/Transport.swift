@@ -71,4 +71,7 @@ protocol HostTransport {
     /// Drop any cached authentication so the next connect re-prompts
     /// (macOS: close the shared SSH master; iOS: no-op).
     func invalidateAuthentication(completion: @escaping @MainActor () -> Void)
+    /// The host is being removed from the app: delete any stored credentials
+    /// (iOS: the Keychain entry; macOS: nothing — auth lives in ~/.ssh).
+    func cleanUpOnRemoval()
 }

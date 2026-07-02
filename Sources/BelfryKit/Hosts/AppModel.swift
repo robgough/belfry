@@ -80,6 +80,7 @@ final class AppModel {
     func removeHost(_ host: HostModel) {
         guard host.canDisconnect else { return }   // never remove Local
         host.shutdown()
+        host.transport.cleanUpOnRemoval()
         hosts.removeAll { $0.id == host.id }
         persist()
     }

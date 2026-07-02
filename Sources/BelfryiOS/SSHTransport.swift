@@ -41,6 +41,10 @@ final class SSHHostTransport: HostTransport {
         completion()
     }
 
+    func cleanUpOnRemoval() {
+        KeychainStore.deleteSecret(for: saved.alias)
+    }
+
     /// The exec request runs via the remote user's shell non-interactively, so
     /// login-profile PATH additions (Homebrew tmux on a Mac host!) are absent —
     /// resolve tmux in-shell with the common fallback. The bare environment
