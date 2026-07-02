@@ -308,6 +308,7 @@ final class ControlModeClient {
             "operation timed out", "could not resolve", "no route to host",
             "host key verification failed", "remote host identification has changed",
             "command not found", "not a directory", "connection closed",
+            "no such file or directory", "tmux not found",
         ]
         if markers.contains(where: { l.contains($0) }) {
             lastDiagnostic = line.trimmingCharacters(in: .whitespacesAndNewlines)

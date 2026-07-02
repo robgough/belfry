@@ -45,16 +45,11 @@ final class SSHHostTransport: HostTransport {
         KeychainStore.deleteSecret(for: saved.alias)
     }
 
-    /// The exec request runs via the remote user's shell non-interactively, so
-    /// login-profile PATH additions (Homebrew tmux on a Mac host!) are absent —
-    /// resolve tmux in-shell with the common fallback. The bare environment
-    /// also has no locale: without `-u` tmux decides this client can't take
-    /// UTF-8 and rewrites every non-ASCII cell as `_` (emoji, nerd glyphs, ❯).
-    /// LANG is exported too so shells *inside* new sessions are UTF-8.
+    /// PATH/locale handling for the non-interactive exec shell lives in the
+    /// shared RemoteTmux builder. `-u`: without it tmux decides this client
+    /// can't take UTF-8 and rewrites every non-ASCII cell as `_`.
     static func tmuxCommand(_ args: String) -> String {
-        "TB=$(command -v tmux || echo /opt/homebrew/bin/tmux); "
-        + "export LANG=\"${LANG:-en_US.UTF-8}\"; "
-        + "exec \"$TB\" -u \(args)"
+        RemoteTmux.command(args: "-u \(args)")
     }
 
     private func sshConfiguration(startupCommand: String) -> TerminiSSHConfiguration {

@@ -38,9 +38,12 @@ enum TmuxTransport: Hashable, Sendable {
                 workingDirectoryURL: home
             )
         case .ssh(let alias):
+            // The remote command goes through RemoteTmux: a bare `tmux` word
+            // is invisible to the non-interactive remote shell's PATH when
+            // tmux came from Homebrew (zsh:1: command not found: tmux).
             return TerminiProcessSpec(
                 executableURL: URL(fileURLWithPath: "/usr/bin/ssh"),
-                arguments: ["-t"] + SSHControl.options + [alias, "tmux"] + args,
+                arguments: ["-t"] + SSHControl.options + [alias, RemoteTmux.command(argv: args)],
                 environment: SSHControl.askpassEnvironment(),
                 workingDirectoryURL: home
             )

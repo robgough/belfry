@@ -251,9 +251,13 @@ private struct HostStatusRow: View {
         case .connected:
             Text("No sessions").font(.caption).foregroundStyle(.secondary)
         case .disconnected(let reason):
-            HStack(spacing: 6) {
+            // Reasons are real ssh/shell diagnostics and easily outgrow the
+            // sidebar: wrap a few lines, and carry the full text in a tooltip.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Label(reason, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
+                    .lineLimit(3)
+                    .help(reason)
                 InlineLinkButton(title: "Reconnect") { host.reconnect() }
             }
         case .offline:

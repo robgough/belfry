@@ -39,7 +39,7 @@ enum QuitCleanup {
                 timeout: 2.0)
         case .ssh(let alias):
             run("/usr/bin/ssh",
-                SSHControl.options + [alias, "tmux", "kill-session", "-t", session],
+                SSHControl.options + [alias, RemoteTmux.command(argv: ["kill-session", "-t", session])],
                 timeout: 2.5)
             // Close the multiplexed master connection.
             run("/usr/bin/ssh", SSHControl.options + ["-O", "exit", alias], timeout: 1.5)

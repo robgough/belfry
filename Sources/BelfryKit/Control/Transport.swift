@@ -40,6 +40,39 @@ protocol TerminalWorkspace: AnyObject {
     func makeSurfaceView(fontSize: Double?, isVisible: Bool) -> AnyView
 }
 
+/// Builds the remote-shell command that locates tmux and execs it. Shared by
+/// every transport that runs tmux on the far side of ssh (macOS spawned ssh,
+/// iOS SSH exec requests, quit cleanup).
+///
+/// Remote commands run in a non-interactive, non-login shell, so login-profile
+/// PATH additions are absent — notably Homebrew tmux on a Mac host, which is
+/// invisible to sshd's default PATH. Resolve tmux in-shell with fallbacks to
+/// the standard Homebrew paths, and fail with a distinct message (matched by
+/// `ControlModeClient.noteDiagnostic`, so it becomes the host's disconnect
+/// reason) when it's genuinely missing. The bare environment also has no
+/// locale: LANG is exported so tmux takes UTF-8 (with `-u` belt-and-braces)
+/// and shells *inside* new sessions inherit it.
+enum RemoteTmux {
+    static func command(args: String) -> String {
+        "TB=$(command -v tmux || echo /opt/homebrew/bin/tmux); "
+        + "[ -x \"$TB\" ] || TB=/usr/local/bin/tmux; "
+        + "[ -x \"$TB\" ] || { echo 'tmux not found on this host' >&2; exit 127; }; "
+        + "export LANG=\"${LANG:-en_US.UTF-8}\"; "
+        + "exec \"$TB\" \(args)"
+    }
+
+    /// Argv-style variant: ssh joins remote-command words with spaces and the
+    /// remote shell re-parses them, so each word is single-quoted (this also
+    /// makes session names with spaces survive the trip).
+    static func command(argv: [String]) -> String {
+        command(args: argv.map(quoted).joined(separator: " "))
+    }
+
+    static func quoted(_ word: String) -> String {
+        "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+}
+
 /// Outcome of a Claude-hooks management operation (mirrors ClaudeHooks.Outcome,
 /// which is macOS-only).
 enum HooksOutcome {
