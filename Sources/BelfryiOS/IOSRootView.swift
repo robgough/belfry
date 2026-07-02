@@ -7,9 +7,12 @@ struct IOSRootView: View {
     @State private var selection: WindowSelection?
     @State private var prompt: SidebarPrompt?
     @State private var confirm: ConfirmAction?
+    // Start with the sidebar shown: prominentDetail otherwise opens on an
+    // empty detail pane with the tree hidden behind the toggle button.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             SessionTreeView(hosts: model.hosts, model: model,
                             selection: $selection, prompt: $prompt, confirm: $confirm)
                 .navigationTitle("Belfry")

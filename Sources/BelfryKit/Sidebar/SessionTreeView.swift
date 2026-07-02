@@ -68,6 +68,17 @@ private struct HostHeader: View {
                 .foregroundStyle(.primary)
                 .textCase(nil)
             Spacer(minLength: 0)
+            #if os(iOS)
+            // Section headers don't get long-press context menus on iOS, so the
+            // host actions (Disconnect/Connect, Remove…) need a visible button.
+            Menu {
+                menu
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+            }
+            #endif
         }
         .padding(.vertical, 4)
         .contextMenu { menu }
