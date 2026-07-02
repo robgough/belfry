@@ -188,13 +188,19 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         _ = terminalView.becomeFirstResponder()
     }
 
-    /// Force the *system* keyboard up. SwiftTerm's accessory strip can swap the
-    /// input view to its own function-key pad (no letters); this always returns
-    /// to the real keyboard and makes the terminal first responder.
-    func showSystemKeyboard() {
-        terminalView.inputView = nil
-        terminalView.reloadInputViews()
-        _ = terminalView.becomeFirstResponder()
+    /// Toolbar keyboard toggle. Hiding drops first-responder status, which
+    /// dismisses *everything* — the system keyboard and SwiftTerm's accessory
+    /// strip — giving the terminal the whole screen. Showing resets the input
+    /// view to the real system keyboard first (SwiftTerm's strip can swap in
+    /// its own letter-less function-key pad) and refocuses the terminal.
+    func toggleKeyboard() {
+        if terminalView.isFirstResponder {
+            _ = terminalView.resignFirstResponder()
+        } else {
+            terminalView.inputView = nil
+            terminalView.reloadInputViews()
+            _ = terminalView.becomeFirstResponder()
+        }
     }
 
     func makeSurfaceView(fontSize: Double?, isVisible: Bool) -> AnyView {

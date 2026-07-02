@@ -26,7 +26,7 @@ struct IOSRootView: View {
                     if selectedWorkspace != nil {
                         ToolbarItem(placement: .primaryAction) {
                             Button {
-                                (selectedWorkspace as? BelfrySSHWorkspace)?.showSystemKeyboard()
+                                (selectedWorkspace as? BelfrySSHWorkspace)?.toggleKeyboard()
                             } label: {
                                 Image(systemName: "keyboard")
                             }
