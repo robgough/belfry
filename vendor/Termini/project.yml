@@ -1,0 +1,30 @@
+name: TerminiDemos
+options:
+  minimumXcodeGenVersion: 2.38.0
+packages:
+  Termini:
+    path: .
+targets:
+  TerminiIOSDemo:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Examples/TerminiIOSDemo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.arach.TerminiIOSDemo
+        PRODUCT_NAME: TerminiIOSDemo
+        SWIFT_VERSION: 5.9
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 2U83JFPW66
+    dependencies:
+      - package: Termini
+        product: Termini
+      - package: Termini
+        product: TerminiSSH

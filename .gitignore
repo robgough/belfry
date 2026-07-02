@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+.DS_Store
+# Assembled app bundle (build product of scripts/make_app.sh)
+Belfry.app/
+nohup.out
+*.log
