@@ -2,6 +2,17 @@
 
 All notable changes to Belfry are documented here.
 
+## [0.3.0] — 2026-07-03
+
+### Added
+
+- **Automatic updates** (macOS): Belfry now updates itself via
+  [Sparkle](https://sparkle-project.org). It checks the feed at
+  `belfry.robgough.net/appcast.xml`, updates are EdDSA-signed on top of
+  notarization, and there's a "Check for Updates…" item in the app menu.
+  This is the first release with the updater on board, so 0.2.0 users need
+  to grab this one manually — everything after arrives on its own.
+
 ## [0.2.0] — 2026-07-02
 
 First public release: a notarized, universal (Apple Silicon + Intel) `Belfry.app`

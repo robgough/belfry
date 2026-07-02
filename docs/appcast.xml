@@ -1,0 +1,16 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Belfry</title>
+        <item>
+            <title>0.3.0</title>
+            <pubDate>Fri, 03 Jul 2026 00:35:13 +0100</pubDate>
+            <link>https://belfry.robgough.net</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/robgough/belfry/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>21</sparkle:version>
+            <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/robgough/belfry/releases/download/v0.3.0/Belfry-0.3.0.zip" length="15873534" type="application/octet-stream" sparkle:edSignature="sGOKkRjecYfFpkQICahxOynmiIWjEH4XheqfYtjum3toRZbY0CZCtmH0rqK31nndDod/KxpCdy2dqheaRl4dAw=="/>
+        </item>
+    </channel>
+</rss>

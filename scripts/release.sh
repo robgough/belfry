@@ -38,6 +38,25 @@ fi
 rm -f "$ZIP"
 ditto -c -k --keepParent Belfry.app "$ZIP"
 
+# Regenerate the Sparkle appcast (docs/appcast.xml — published by GitHub
+# Pages at belfry.robgough.net/appcast.xml). EdDSA-signs the zip with the
+# private key from the login keychain; commit + push docs/ to publish.
+SPARKLE_BIN=".build/sparkle-tools/bin"
+if [ ! -x "$SPARKLE_BIN/generate_appcast" ]; then
+    echo "› fetching Sparkle tools…"
+    mkdir -p .build/sparkle-tools
+    curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/2.9.3/Sparkle-2.9.3.tar.xz" \
+        | tar -xJ -C .build/sparkle-tools
+fi
+STAGE=".build/appcast-stage"
+rm -rf "$STAGE" && mkdir -p "$STAGE"
+cp "$ZIP" "$STAGE/"
+"$SPARKLE_BIN/generate_appcast" "$STAGE" \
+    --download-url-prefix "https://github.com/robgough/belfry/releases/download/v$VERSION/" \
+    --link "https://belfry.robgough.net" \
+    --full-release-notes-url "https://github.com/robgough/belfry/releases" \
+    -o docs/appcast.xml
+
 echo "› gatekeeper assessment:"
 spctl --assess --type execute -vv Belfry.app || true
-echo "✓ $ZIP"
+echo "✓ $ZIP (+ docs/appcast.xml regenerated)"

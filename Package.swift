@@ -18,6 +18,12 @@ let package = Package(
             url: "https://github.com/migueldeicaza/SwiftTerm.git",
             from: "1.13.0"
         ),
+        // Auto-updates for the distributed .app (macOS only; the framework is
+        // embedded + re-signed by scripts/make_app.sh).
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle",
+            from: "2.9.3"
+        ),
     ],
     targets: [
         // The macOS app. `Sources/BelfryKit` is the platform-neutral core,
@@ -29,6 +35,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Termini", package: "Termini"),
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources",
             exclude: ["BelfryAskpass", "BelfryiOS"],

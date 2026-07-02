@@ -7,6 +7,7 @@ struct BelfryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = BelfryApp.bootstrapModel()
 
+
     /// Local host + saved ssh aliases, with the SSH socket dir ready.
     private static func bootstrapModel() -> AppModel {
         SSHControl.ensureSocketDir()
@@ -27,6 +28,9 @@ struct BelfryApp: App {
         }
         .windowStyle(.titleBar)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updater.controller?.checkForUpdates(nil) }
+            }
             CommandMenu("View") {
                 Button("Increase Font Size") { model.increaseFont() }
                     .keyboardShortcut("+", modifiers: .command)
@@ -126,8 +130,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isTerminating = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        // Only the bare `swift build` binary needs to force a GUI presence —
+        // the bundled app is .regular already, and flipping the policy during
+        // launch makes SwiftUI build the menu bar twice: standard-menu
+        // CommandGroups land in the discarded first build (observed as a
+        // doubled View menu and a missing Check for Updates item).
+        if Bundle.main.bundleIdentifier == nil {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         Self.rotateQuitLogIfNeeded()
         qlog("didFinishLaunching")
         // Safety net: a SwiftUI single-`Window` scene doesn't always terminate the
