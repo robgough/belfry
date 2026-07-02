@@ -148,11 +148,30 @@ final class SSHControlChannel: ControlChannel {
 /// The SwiftTerm view is created once and owned here, so terminal state
 /// survives SwiftUI remounts; remote bytes bypass the Termini controller via
 /// the session's raw-output sink and feed SwiftTerm directly.
+/// Marker type so `BelfryTerminalView` can tell our scrollback pan apart from
+/// the pans it refuses.
+private final class ScrollbackPanRecognizer: UIPanGestureRecognizer {}
+
+/// SwiftTerm installs plain `UIPanGestureRecognizer`s that report touch pans
+/// to a mouse-mode app as *button* drags — and it (re)installs them lazily
+/// whenever the app toggles mouse mode, so they can't reliably be disabled
+/// after the fact. Refuse them at the door instead: exact `UIPanGestureRecognizer`
+/// instances never attach. Our `ScrollbackPanRecognizer` subclass and system
+/// internals (which use their own subclasses) pass through untouched.
+final class BelfryTerminalView: SwiftTerm.TerminalView {
+    override func addGestureRecognizer(_ gestureRecognizer: UIGestureRecognizer) {
+        if type(of: gestureRecognizer) == UIPanGestureRecognizer.self {
+            return
+        }
+        super.addGestureRecognizer(gestureRecognizer)
+    }
+}
+
 @MainActor
 final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     private let session: TerminiSSHSession
     private let configuration: TerminiSSHConfiguration
-    let terminalView = SwiftTerm.TerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+    let terminalView = BelfryTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
     private(set) var terminalSize: TerminiTerminalSize?
 
     /// Wheel-tick accumulator for the scrollback pan (points since last tick).
@@ -182,15 +201,10 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     /// ticks at the touch position (tmux routes them to the right pane).
     /// Horizontal pans still fall through to SwiftTerm's handlers.
     private func installScrollbackGesture() {
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleScrollbackPan(_:)))
+        let pan = ScrollbackPanRecognizer(target: self, action: #selector(handleScrollbackPan(_:)))
         pan.maximumNumberOfTouches = 1
         pan.delegate = self
         terminalView.addGestureRecognizer(pan)
-        for recognizer in terminalView.gestureRecognizers ?? [] where recognizer !== pan {
-            if recognizer is UIPanGestureRecognizer {
-                recognizer.require(toFail: pan)
-            }
-        }
     }
 
     @objc private func handleScrollbackPan(_ gesture: UIPanGestureRecognizer) {
