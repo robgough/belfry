@@ -1,19 +1,6 @@
-# Third-Party Notices
-
-This project vendors and/or redistributes third-party components. The following notices apply.
-
-## Ghostty
-
-Termini ships Ghostty's runtime as `GhosttyKit.xcframework`, either from
-the repo's GitHub release artifact or from a local development override under
-`vendor/ghostty/macos`.
-
-Ghostty is licensed under the MIT License:
-
-```
 MIT License
 
-Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
+Copyright (c) 2026 Arach Tchoupani
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -32,11 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
----
-
-## Other dependencies
-
-If additional license files exist under `vendor/` or elsewhere (LICENSE, NOTICE, COPYING),
-copy them into this document and keep the original text intact.

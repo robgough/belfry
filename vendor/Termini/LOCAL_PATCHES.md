@@ -3,6 +3,10 @@
 Vendored from https://github.com/arach/Termini at commit
 `ccd0d17e883d1af93fce002d204860184f2a9bad`.
 
+Upstream added an MIT LICENSE (and completed THIRD_PARTY_NOTICES with
+Ghostty's MIT text) in July 2026 at our request — both files are
+backported here from upstream so this vendored copy is redistributable.
+
 We vendor (rather than use the remote package) because Termini wraps libghostty's
 explicitly-unstable embedding API, and we need to patch its NSView resize path.
 
