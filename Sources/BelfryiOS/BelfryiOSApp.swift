@@ -1,9 +1,11 @@
 import CoreText
 import SwiftUI
+import UIKit
 
 @main
 struct BelfryiOSApp: App {
     @State private var model = BelfryiOSApp.bootstrapModel()
+    @State private var backgroundGrace = BackgroundGrace()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -22,14 +24,15 @@ struct BelfryiOSApp: App {
         WindowGroup {
             IOSRootView(model: model)
         }
-        // iOS kills our SSH connections shortly after backgrounding; the tmux
-        // servers keep the sessions. Tear links down quietly on background and
-        // rebuild them on return, so foregrounding is a fast resync — never a
-        // pile of dead sockets.
+        // The tmux servers keep the sessions; only our links need managing.
+        // On background, a UIBackgroundTask keeps the SSH connections alive for
+        // the grace window iOS grants (~25s) so quick app switches come back
+        // instantly; when it runs out we tear down quietly and foregrounding
+        // becomes a fast reconnect instead of a pile of dead sockets.
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .background: model.suspendAll()
-            case .active: model.resumeAll()
+            case .background: backgroundGrace.enteredBackground(model: model)
+            case .active: backgroundGrace.becameActive(model: model)
             default: break
             }
         }
@@ -72,5 +75,56 @@ extension HostModel {
             id: saved.alias,
             displayName: saved.displayName ?? saved.alias,
             transport: SSHHostTransport(saved: saved))
+    }
+}
+
+/// Keeps SSH links alive across brief trips to the background.
+///
+/// iOS suspends the process shortly after backgrounding unless a background
+/// task is open. We open one and delay `suspendAll()` until just before the
+/// system's grace window closes (or the expiration handler fires, whichever
+/// comes first). A quick check-something-else-and-return never drops the
+/// connections; a longer absence suspends cleanly and resumes on return.
+@MainActor
+final class BackgroundGrace {
+    private var taskID: UIBackgroundTaskIdentifier = .invalid
+    private var pendingSuspend: DispatchWorkItem?
+    /// Stay under the ~30s the system typically grants, so we suspend in an
+    /// orderly fashion rather than in the expiration handler's last gasp.
+    private let graceSeconds: TimeInterval = 25
+
+    func enteredBackground(model: AppModel) {
+        endTask()
+        pendingSuspend?.cancel()
+        taskID = UIApplication.shared.beginBackgroundTask(withName: "belfry.ssh-grace") { [weak self] in
+            // Expiration arrives on the main thread; suspend immediately.
+            self?.suspendNow(model: model)
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.suspendNow(model: model)
+        }
+        pendingSuspend = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + graceSeconds, execute: work)
+    }
+
+    func becameActive(model: AppModel) {
+        pendingSuspend?.cancel()
+        pendingSuspend = nil
+        endTask()
+        // No-op if we never actually suspended (AppModel guards on its own flag).
+        model.resumeAll()
+    }
+
+    private func suspendNow(model: AppModel) {
+        pendingSuspend?.cancel()
+        pendingSuspend = nil
+        model.suspendAll()
+        endTask()
+    }
+
+    private func endTask() {
+        guard taskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(taskID)
+        taskID = .invalid
     }
 }

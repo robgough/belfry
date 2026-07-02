@@ -38,16 +38,26 @@ struct TerminalDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onChange(of: selection, initial: true) { _, sel in
-            // Defer the side-effects: this fires from the List's selection change,
-            // and mutating observed state (activating a surface) synchronously here
-            // can re-enter the NSTableView delegate. One tick later is safe.
-            DispatchQueue.main.async {
-                guard let sel, let host = selectedHost, let session = selectedSession else { return }
-                host.surfaceStore.activate(sessionID: session.id, sessionName: session.name)
-                host.client.selectWindow(sel.windowID)
-                host.surfaceStore.workspace(for: session.id)?.focus()
-            }
+        .onChange(of: selection, initial: true) { _, _ in
+            activateSelection()
+        }
+        // After a reconnect (mobile background resume, network blip) the store
+        // repopulates while `selection` is unchanged — the selected session's id
+        // transitioning nil→value re-arms its surface without needing a re-tap.
+        .onChange(of: selectedSession?.id) { _, _ in
+            activateSelection()
+        }
+    }
+
+    /// Defer the side-effects: this fires from the List's selection change,
+    /// and mutating observed state (activating a surface) synchronously here
+    /// can re-enter the NSTableView delegate. One tick later is safe.
+    private func activateSelection() {
+        DispatchQueue.main.async {
+            guard let sel = selection, let host = selectedHost, let session = selectedSession else { return }
+            host.surfaceStore.activate(sessionID: session.id, sessionName: session.name)
+            host.client.selectWindow(sel.windowID)
+            host.surfaceStore.workspace(for: session.id)?.focus()
         }
     }
 }

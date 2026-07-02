@@ -19,7 +19,21 @@ struct IOSRootView: View {
         } detail: {
             TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize)
                 .background(AppTheme.windowBackground)
+                .toolbar {
+                    if selectedWorkspace != nil {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button {
+                                (selectedWorkspace as? BelfrySSHWorkspace)?.showSystemKeyboard()
+                            } label: {
+                                Image(systemName: "keyboard")
+                            }
+                        }
+                    }
+                }
         }
+        // Screen space is precious: keep the terminal full-width and slide the
+        // sidebar *over* it instead of squeezing the grid.
+        .navigationSplitViewStyle(.prominentDetail)
         .tint(AppTheme.accent)
         .preferredColorScheme(AppTheme.colorScheme)
         .task {
@@ -52,6 +66,15 @@ struct IOSRootView: View {
         } message: { action in
             Text(action.message)
         }
+    }
+
+    /// The warm workspace behind the current selection (for the keyboard button).
+    private var selectedWorkspace: (any TerminalWorkspace)? {
+        guard let sel = selection,
+              let host = model.hosts.first(where: { $0.id == sel.hostID }),
+              let session = host.store.sessions.first(where: { $0.windows.contains { $0.id == sel.windowID } })
+        else { return nil }
+        return host.surfaceStore.workspace(for: session.id)
     }
 
     private var addMenu: some View {

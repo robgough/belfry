@@ -184,6 +184,15 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         _ = terminalView.becomeFirstResponder()
     }
 
+    /// Force the *system* keyboard up. SwiftTerm's accessory strip can swap the
+    /// input view to its own function-key pad (no letters); this always returns
+    /// to the real keyboard and makes the terminal first responder.
+    func showSystemKeyboard() {
+        terminalView.inputView = nil
+        terminalView.reloadInputViews()
+        _ = terminalView.becomeFirstResponder()
+    }
+
     func makeSurfaceView(fontSize: Double?, isVisible: Bool) -> AnyView {
         AnyView(SwiftTermSurface(terminalView: terminalView, fontSize: fontSize))
     }
