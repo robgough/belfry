@@ -28,6 +28,9 @@ targets:
       # launch via CoreText (no Info.plist UIAppFonts needed).
       - path: Resources/Fonts
         buildPhase: resources
+      # App icon (belfry-1024.png flattened onto the theme background —
+      # iOS icons must not carry an alpha channel).
+      - path: Resources/BelfryiOS.xcassets
     dependencies:
       - package: Termini
         product: Termini
@@ -43,6 +46,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         CODE_SIGN_STYLE: Automatic
