@@ -155,6 +155,9 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     let terminalView = SwiftTerm.TerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
     private(set) var terminalSize: TerminiTerminalSize?
 
+    /// Wheel-tick accumulator for the scrollback pan (points since last tick).
+    private var scrollAccumulator: CGFloat = 0
+
     init(configuration: TerminiSSHConfiguration) {
         self.configuration = configuration
         // The controller is a required-but-unused mailbox (raw sink bypasses it).
@@ -162,9 +165,61 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         super.init()
         terminalView.terminalDelegate = self
         applyTheme()
+        installScrollbackGesture()
         session.onRawOutput = { [weak self] data in
             self?.terminalView.feed(byteArray: ArraySlice([UInt8](data)))
         }
+    }
+
+    // MARK: Touch scrollback
+
+    /// SwiftTerm reports pans to a mouse-mode app as *button* presses and
+    /// drags — pointer semantics. Under tmux (`mouse on`) that reads as
+    /// selection drags and button-2 pastes instead of scrolling. Real
+    /// terminals translate scroll gestures into *wheel* events, which make
+    /// tmux enter copy-mode and scroll its native scrollback — so a mostly
+    /// vertical single-finger pan is intercepted here and sent as SGR wheel
+    /// ticks at the touch position (tmux routes them to the right pane).
+    /// Horizontal pans still fall through to SwiftTerm's handlers.
+    private func installScrollbackGesture() {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleScrollbackPan(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = self
+        terminalView.addGestureRecognizer(pan)
+        for recognizer in terminalView.gestureRecognizers ?? [] where recognizer !== pan {
+            if recognizer is UIPanGestureRecognizer {
+                recognizer.require(toFail: pan)
+            }
+        }
+    }
+
+    @objc private func handleScrollbackPan(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            scrollAccumulator = 0
+        case .changed:
+            let step = max(terminalView.font.lineHeight, 8)
+            scrollAccumulator += gesture.translation(in: terminalView).y
+            gesture.setTranslation(.zero, in: terminalView)
+            while abs(scrollAccumulator) >= step {
+                // Finger moving down reveals older content = wheel up.
+                sendWheel(up: scrollAccumulator > 0, at: gesture.location(in: terminalView))
+                scrollAccumulator -= step * (scrollAccumulator > 0 ? 1 : -1)
+            }
+        default:
+            scrollAccumulator = 0
+        }
+    }
+
+    private func sendWheel(up: Bool, at point: CGPoint) {
+        let terminal = terminalView.getTerminal()
+        guard terminal.mouseMode != .off else { return }
+        let bounds = terminalView.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let col = max(1, min(terminal.cols, Int(point.x / bounds.width * CGFloat(terminal.cols)) + 1))
+        let row = max(1, min(terminal.rows, Int(point.y / bounds.height * CGFloat(terminal.rows)) + 1))
+        // SGR mouse (tmux enables 1006): wheel up = button 64, down = 65.
+        session.send(Data("\u{1B}[<\(up ? 64 : 65);\(col);\(row)M".utf8))
     }
 
     func start() {
@@ -238,6 +293,18 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
             green: CGFloat((hex >> 8) & 0xFF) / 255,
             blue: CGFloat(hex & 0xFF) / 255,
             alpha: 1)
+    }
+}
+
+extension BelfrySSHWorkspace: UIGestureRecognizerDelegate {
+    /// Claim only clearly vertical pans for scrollback; horizontal ones fail
+    /// through to SwiftTerm (mouse drags / selection extension).
+    nonisolated func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        return MainActor.assumeIsolated {
+            let velocity = pan.velocity(in: pan.view)
+            return abs(velocity.y) > abs(velocity.x) * 1.5
+        }
     }
 }
 
