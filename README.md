@@ -17,6 +17,12 @@ Your sessions live in tmux, exactly as they always have. Belfry attaches; it nev
 - **macOS**: terminals render with libghostty (via a vendored [Termini](https://github.com/arach/Termini)); your Ghostty colour theme is picked up automatically (Catppuccin Mocha fallback). The local tmux server is started under launchd, so even force-quitting Belfry can't take your sessions down.
 - **iPadOS/iOS**: terminals render with [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) over SwiftNIO SSH (no processes to spawn on iOS). Touch scrollback (swipe = tmux copy-mode wheel), a key bar with esc/ctrl/arrows, bundled Maple Mono NF for nerd-font glyphs, credentials in the Keychain, and a background grace period so quick app switches keep connections alive — longer absences reconnect and resync instantly on return.
 
+## Installing
+
+Prefer a download? A notarized, universal `Belfry.app` (macOS 14+) is on the
+[releases page](https://github.com/robgough/belfry/releases/latest) — unzip and
+drag to Applications. Changes per release are in [CHANGELOG.md](CHANGELOG.md).
+
 ## Building
 
 ### macOS (14+)

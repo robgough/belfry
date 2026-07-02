@@ -7,3 +7,4 @@ Belfry.app/
 nohup.out
 *.log
 BelfryiOS.xcodeproj/
+Belfry-*.zip

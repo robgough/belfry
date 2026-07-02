@@ -9,9 +9,13 @@
 <link rel="apple-touch-icon" href="images/icon-180.png">
 <meta property="og:title" content="Belfry — a native front-end for real tmux">
 <meta property="og:description" content="A sidebar of hosts, sessions and windows you click to switch, with live Claude Code status badges. macOS + iPadOS, MIT licensed.">
-<meta property="og:image" content="https://belfry.robgough.net/images/macos.png">
+<meta property="og:image" content="https://belfry.robgough.net/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <meta property="og:url" content="https://belfry.robgough.net/">
 <meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://belfry.robgough.net/images/og.png">
 <style>
   :root {
     --base:     #1e1e2e;  /* Catppuccin Mocha base — the app's fallback theme */
@@ -189,6 +193,7 @@
   pre.code .c { color: var(--overlay); }
   .card p { font-size: 0.88rem; color: var(--subtext); margin-top: 0.9rem; }
   .note { margin-top: 1.25rem; color: var(--subtext); font-size: 0.95rem; max-width: 65ch; }
+  .note.lead { margin: 0 0 1.5rem; }
 
   /* architecture + footer */
   .arch p { color: var(--subtext); max-width: 68ch; margin-bottom: 1rem; }
@@ -243,8 +248,8 @@
     <h1 class="tagline">A native macOS&nbsp;+&nbsp;iPadOS front-end for <span class="tmux">real tmux</span>.</h1>
     <p class="sub">A sidebar of hosts → sessions → windows you click to switch, with the selected session's live terminal filling the rest. Local or over SSH. <strong>Your sessions live in tmux, exactly as they always have — Belfry attaches; it never owns them.</strong> Quit the app, kill the network, switch devices: everything keeps running.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/robgough/belfry">View on GitHub</a>
-      <a class="btn" href="#build">Build it →</a>
+      <a class="btn primary" href="https://github.com/robgough/belfry/releases/latest">Download for macOS</a>
+      <a class="btn" href="https://github.com/robgough/belfry">View on GitHub</a>
     </div>
   </div>
 </header>
@@ -309,6 +314,7 @@
 
   <section id="build">
     <h2><span class="idx">4:</span>build</h2>
+    <p class="note lead">No toolchain needed on the Mac: <a href="https://github.com/robgough/belfry/releases/latest">download the notarized app</a> (universal, macOS 14+), unzip, drag to Applications. Or build from source:</p>
     <div class="build-grid">
       <div class="card">
         <h3>macOS <span>14+</span></h3>
