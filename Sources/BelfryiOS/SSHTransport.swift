@@ -212,9 +212,9 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         case .began:
             scrollAccumulator = 0
         case .changed:
-            // Half a row per wheel tick: 1 tick/row tracked finger movement 1:1
-            // and read as sluggish — this doubles the scroll rate.
-            let step = max(terminalView.font.lineHeight, 8) / 2
+            // One wheel tick per row of finger travel — tried 2x and it
+            // overshot; 1:1 tracking feels right.
+            let step = max(terminalView.font.lineHeight, 8)
             scrollAccumulator += gesture.translation(in: terminalView).y
             gesture.setTranslation(.zero, in: terminalView)
             while abs(scrollAccumulator) >= step {
