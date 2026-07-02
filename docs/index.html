@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Belfry — a native front-end for real tmux</title>
+<meta name="description" content="Belfry is a native macOS + iPadOS front-end for real tmux: click between hosts, sessions and windows, with live Claude Code status badges. Your sessions stay in tmux — Belfry attaches, it never owns them.">
+<link rel="icon" type="image/png" sizes="64x64" href="images/icon-64.png">
+<link rel="apple-touch-icon" href="images/icon-180.png">
+<meta property="og:title" content="Belfry — a native front-end for real tmux">
+<meta property="og:description" content="A sidebar of hosts, sessions and windows you click to switch, with live Claude Code status badges. macOS + iPadOS, MIT licensed.">
+<meta property="og:image" content="https://belfry.robgough.net/images/macos.png">
+<meta property="og:url" content="https://belfry.robgough.net/">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --base:     #1e1e2e;  /* Catppuccin Mocha base — the app's fallback theme */
+    --mantle:   #181825;
+    --crust:    #11111b;
+    --surface:  #313244;
+    --text:     #cdd6f4;
+    --subtext:  #a6adc8;
+    --overlay:  #6c7086;
+    --bell:     #e8a33d;  /* the icon's bell */
+    --peach:    #fab387;
+    --lavender: #b4befe;
+    --blue:     #89b4fa;
+    --green:    #a6e3a1;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 2rem; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    background: var(--base);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.65;
+    /* room for the status bar */
+    padding-bottom: 4.5rem;
+  }
+  a { color: var(--peach); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--lavender); outline-offset: 2px; border-radius: 2px;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 0 1.25rem; }
+
+  /* ---- hero ---------------------------------------------------------- */
+  header {
+    padding: 4.5rem 0 3rem;
+    border-bottom: 1px solid var(--surface);
+    background: linear-gradient(180deg, var(--crust), var(--base) 85%);
+  }
+  .banner {
+    font-family: var(--mono);
+    font-size: clamp(9px, 2.6vw, 20px);
+    line-height: 1.18;
+    white-space: pre;
+    background: linear-gradient(100deg, var(--lavender) 15%, var(--blue) 45%, var(--bell) 85%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 1.75rem;
+    user-select: none;
+  }
+  .prompt {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--overlay);
+    margin-bottom: 2.25rem;
+  }
+  .prompt .user { color: var(--blue); }
+  .prompt .chev { color: var(--green); }
+  .prompt .cmd  { color: var(--text); }
+  h1.tagline {
+    font-size: clamp(1.5rem, 3.4vw, 2.2rem);
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    max-width: 36ch;
+    line-height: 1.25;
+    margin-bottom: 1rem;
+  }
+  h1 .tmux { color: var(--peach); }
+  .sub {
+    color: var(--subtext);
+    max-width: 58ch;
+    margin-bottom: 2.25rem;
+    font-size: 1.05rem;
+  }
+  .sub strong { color: var(--text); font-weight: 600; }
+  .cta { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    padding: 0.65rem 1.1rem;
+    border-radius: 6px;
+    border: 1px solid var(--surface);
+    color: var(--text);
+    background: var(--mantle);
+  }
+  .btn:hover { text-decoration: none; border-color: var(--overlay); }
+  .btn.primary {
+    background: var(--bell);
+    border-color: var(--bell);
+    color: var(--crust);
+    font-weight: 600;
+  }
+  .btn.primary:hover { background: var(--peach); border-color: var(--peach); }
+
+  /* ---- sections ------------------------------------------------------ */
+  section { padding: 3.5rem 0 0.5rem; }
+  h2 {
+    font-family: var(--mono);
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--lavender);
+    margin-bottom: 1.75rem;
+  }
+  h2 .idx { color: var(--overlay); font-weight: 400; }
+
+  /* screenshots */
+  .shots { display: grid; grid-template-columns: 3fr 2fr; gap: 1.25rem; align-items: start; }
+  @media (max-width: 720px) { .shots { grid-template-columns: 1fr; } }
+  figure { min-width: 0; }
+  .shots img {
+    width: 100%; height: auto; display: block;
+    border-radius: 10px;
+    border: 1px solid var(--surface);
+    box-shadow: 0 18px 48px -12px rgba(0,0,0,0.55);
+  }
+  figcaption {
+    font-family: var(--mono); font-size: 0.78rem;
+    color: var(--overlay); margin-top: 0.6rem;
+  }
+
+  /* features */
+  .features { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem 2.5rem; list-style: none; }
+  @media (max-width: 720px) { .features { grid-template-columns: 1fr; } }
+  .features li {
+    padding: 1rem 0 1.1rem;
+    border-bottom: 1px solid #26263a;
+  }
+  .features .k {
+    font-family: var(--mono); font-size: 0.82rem;
+    color: var(--peach); display: block; margin-bottom: 0.3rem;
+  }
+  .features p { color: var(--subtext); font-size: 0.95rem; }
+  .features p strong { color: var(--text); font-weight: 600; }
+
+  /* claude badges */
+  .claude { display: grid; grid-template-columns: auto 1fr; gap: 2rem; align-items: center; }
+  @media (max-width: 720px) { .claude { grid-template-columns: 1fr; } }
+  .badge-demo {
+    font-family: var(--mono); font-size: 0.85rem;
+    background: var(--crust); border: 1px solid var(--surface); border-radius: 10px;
+    padding: 1.1rem 1.3rem; display: grid; gap: 0.55rem; min-width: 17rem;
+  }
+  .badge-demo .row { display: flex; align-items: center; gap: 0.6rem; }
+  .badge-demo .tree { color: var(--overlay); }
+  .pill {
+    margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.55rem;
+    border-radius: 99px; font-weight: 600;
+  }
+  .pill.working { background: rgba(137,180,250,.16); color: var(--blue); animation: pulse 1.6s ease-in-out infinite; }
+  .pill.waiting { background: rgba(232,163,61,.16); color: var(--bell); animation: pulse 1.6s ease-in-out .8s infinite; }
+  @keyframes pulse { 50% { opacity: 0.45; } }
+  @media (prefers-reduced-motion: reduce) { .pill { animation: none; } }
+  .claude p { color: var(--subtext); max-width: 52ch; }
+  .claude p strong { color: var(--text); }
+
+  /* build */
+  .build-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  @media (max-width: 720px) { .build-grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--mantle); border: 1px solid var(--surface); border-radius: 10px;
+    padding: 1.3rem 1.4rem; min-width: 0;
+  }
+  .card h3 {
+    font-family: var(--mono); font-size: 0.85rem; font-weight: 600;
+    color: var(--green); margin-bottom: 0.9rem;
+  }
+  .card h3 span { color: var(--overlay); font-weight: 400; }
+  pre.code {
+    font-family: var(--mono); font-size: 0.82rem; line-height: 1.7;
+    overflow-x: auto; color: var(--text);
+  }
+  pre.code .c { color: var(--overlay); }
+  .card p { font-size: 0.88rem; color: var(--subtext); margin-top: 0.9rem; }
+  .note { margin-top: 1.25rem; color: var(--subtext); font-size: 0.95rem; max-width: 65ch; }
+
+  /* architecture + footer */
+  .arch p { color: var(--subtext); max-width: 68ch; margin-bottom: 1rem; }
+  .arch strong { color: var(--text); }
+  footer {
+    margin-top: 4rem; padding: 2.5rem 0 2rem;
+    border-top: 1px solid var(--surface);
+    font-size: 0.85rem; color: var(--overlay);
+  }
+  footer .icon { width: 44px; height: 44px; margin-bottom: 1rem; }
+  footer p { max-width: 68ch; }
+
+  /* ---- tmux status bar nav (signature) -------------------------------- */
+  nav.status {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+    background: var(--crust);
+    border-top: 1px solid var(--surface);
+    font-family: var(--mono); font-size: 0.8rem;
+    display: flex; align-items: stretch; gap: 0;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  nav.status::-webkit-scrollbar { display: none; }
+  nav.status .session {
+    color: var(--crust); background: var(--green);
+    padding: 0.55rem 0.7rem; font-weight: 700; flex-shrink: 0;
+  }
+  nav.status a {
+    color: var(--subtext); padding: 0.55rem 0.7rem; flex-shrink: 0;
+  }
+  nav.status a:hover { color: var(--text); text-decoration: none; }
+  nav.status a.active { background: var(--surface); color: var(--text); }
+  nav.status a.active::after { content: "*"; color: var(--bell); }
+  nav.status .right {
+    margin-left: auto; padding: 0.55rem 0.7rem; color: var(--overlay);
+    flex-shrink: 0; display: flex; gap: 1rem;
+  }
+  nav.status .right a { padding: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <pre class="banner" role="img" aria-label="belfry">
+ _          _  __
+| |__   ___| |/ _|_ __ _   _
+| '_ \ / _ \ | |_| '__| | | |
+| |_) |  __/ |  _| |  | |_| |
+|_.__/ \___|_|_| |_|   \__, |
+                       |___/ </pre>
+    <p class="prompt"><span class="user">you@anywhere</span> <span class="chev">❯</span> <span class="cmd">tmux attach</span> <span class="c">— without the terminal</span></p>
+    <h1 class="tagline">A native macOS&nbsp;+&nbsp;iPadOS front-end for <span class="tmux">real tmux</span>.</h1>
+    <p class="sub">A sidebar of hosts → sessions → windows you click to switch, with the selected session's live terminal filling the rest. Local or over SSH. <strong>Your sessions live in tmux, exactly as they always have — Belfry attaches; it never owns them.</strong> Quit the app, kill the network, switch devices: everything keeps running.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/robgough/belfry">View on GitHub</a>
+      <a class="btn" href="#build">Build it →</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="overview">
+    <h2><span class="idx">1:</span>overview</h2>
+    <div class="shots">
+      <figure>
+        <img src="images/macos.png" alt="Belfry on macOS: a sidebar of hosts, sessions and windows next to a live libghostty terminal, with a Working badge on a claude window" width="1600" height="1393">
+        <figcaption>macOS — libghostty surfaces, your Ghostty theme picked up automatically</figcaption>
+      </figure>
+      <figure>
+        <img src="images/ipad.png" alt="Belfry on iPad: a full-screen tmux session over SSH with a key bar of esc, ctrl, arrows and function keys" width="1032" height="1376">
+        <figcaption>iPadOS — SwiftTerm over in-process SSH, key bar included</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2><span class="idx">2:</span>features</h2>
+    <ul class="features">
+      <li>
+        <span class="k">control mode</span>
+        <p>The sidebar tree is driven by <strong>tmux control mode</strong> (<code>tmux&nbsp;-C</code>). On tmux ≥ 3.2 updates arrive by server push — near-zero idle traffic; older servers fall back to a light poll.</p>
+      </li>
+      <li>
+        <span class="k">instant switching</span>
+        <p>Every visited session keeps a <strong>warm, attached surface</strong>. Changing sessions is a visibility toggle, not a re-attach.</p>
+      </li>
+      <li>
+        <span class="k">sessions outlive the app</span>
+        <p>On macOS the local tmux server is started under <strong>launchd</strong>, so even force-quitting Belfry can't take your sessions down.</p>
+      </li>
+      <li>
+        <span class="k">battery-conscious</span>
+        <p>Hidden surfaces absorb output <strong>without rendering</strong>, badges animate in the render server, and the idle app measures ~0% CPU.</p>
+      </li>
+      <li>
+        <span class="k">native rendering</span>
+        <p>macOS terminals render with <strong>libghostty</strong>; iPad uses <strong>SwiftTerm</strong> over SwiftNIO SSH. Bundled Maple Mono NF keeps nerd-font glyphs sharp on iPad.</p>
+      </li>
+      <li>
+        <span class="k">made for remote work</span>
+        <p>SSH connection sharing and a native askpass dialog on macOS; Keychain-stored credentials, touch scrollback and a background grace period on iPad. Pairs beautifully with <a href="https://tailscale.com">Tailscale</a>.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section id="claude">
+    <h2><span class="idx">3:</span>claude&nbsp;code&nbsp;badges</h2>
+    <div class="claude">
+      <div class="badge-demo" role="img" aria-label="Sidebar windows with live Claude status badges: claude is working, review is waiting">
+        <div class="row"><span class="tree">└─</span> editor</div>
+        <div class="row"><span class="tree">└─</span> claude <span class="pill working">✳ Working</span></div>
+        <div class="row"><span class="tree">└─</span> review <span class="pill waiting">✳ Waiting</span></div>
+      </div>
+      <p>Run Claude Code inside your tmux windows and the sidebar shows what it's up to: <strong>Working</strong>, or <strong>Waiting on you</strong>. Optional per-host <a href="https://github.com/robgough/belfry/blob/main/docs/claude-status-hooks.md">status hooks</a> install (and uninstall) with one click from the UI, and on macOS the Dock badge counts the windows waiting for your input — so you notice from across the room.</p>
+    </div>
+  </section>
+
+  <section id="build">
+    <h2><span class="idx">4:</span>build</h2>
+    <div class="build-grid">
+      <div class="card">
+        <h3>macOS <span>14+</span></h3>
+        <pre class="code"><span class="c"># needs tmux (brew install tmux) + Xcode</span>
+git clone https://github.com/robgough/belfry
+cd belfry
+scripts/make_app.sh release
+open Belfry.app</pre>
+      </div>
+      <div class="card">
+        <h3>iPadOS / iOS <span>17+</span></h3>
+        <pre class="code"><span class="c"># needs xcodegen (brew install xcodegen)</span>
+git clone https://github.com/robgough/belfry
+cd belfry
+xcodegen generate
+open BelfryiOS.xcodeproj  <span class="c"># set your team, run</span></pre>
+      </div>
+    </div>
+    <p class="note">Add hosts in-app: hostname, user, and a password or ed25519 key. Secrets go in the Keychain, never in the hosts file. The remote end just needs <code>sshd</code> and <code>tmux</code>.</p>
+  </section>
+
+  <section id="about" class="arch">
+    <h2><span class="idx">5:</span>how&nbsp;it&nbsp;works</h2>
+    <p>Each host gets two planes. The <strong>control plane</strong> is a <code>tmux -C</code> client attached to a hidden per-launch session — it feeds the sidebar and issues actions, and never sizes your real sessions. The <strong>data plane</strong> is one terminal surface per visited session running <code>tmux attach</code>.</p>
+    <p>Both ride a per-platform transport behind a small seam: macOS forks PTYs and drives the system <code>ssh</code> with connection sharing; iPadOS speaks SSH in-process via SwiftNIO, running tmux as exec channels.</p>
+  </section>
+
+  <footer>
+    <img class="icon" src="images/icon-180.png" alt="" width="44" height="44">
+    <p>MIT © <a href="https://robgough.net">Rob Gough</a>. Built on <a href="https://github.com/arach/Termini">Termini</a>, <a href="https://github.com/ghostty-org/ghostty">Ghostty</a>, <a href="https://github.com/migueldeicaza/SwiftTerm">SwiftTerm</a> and <a href="https://github.com/subframe7536/maple-font">Maple Mono</a> (OFL). A belfry is where the bell hangs — the sessions were always up there; now you can see them ring.</p>
+  </footer>
+
+</main>
+
+<nav class="status" aria-label="Sections">
+  <span class="session">[belfry]</span>
+  <a href="#overview">1:overview</a>
+  <a href="#features">2:features</a>
+  <a href="#claude">3:claude</a>
+  <a href="#build">4:build</a>
+  <a href="#about">5:about</a>
+  <span class="right">
+    <a href="https://github.com/robgough/belfry">github</a>
+    <span id="clock" aria-hidden="true"></span>
+  </span>
+</nav>
+
+<script>
+  // status-bar clock, tmux-style
+  const clock = document.getElementById("clock");
+  const tick = () => {
+    const d = new Date();
+    clock.textContent = String(d.getHours()).padStart(2, "0") + ":" +
+                        String(d.getMinutes()).padStart(2, "0");
+  };
+  tick(); setInterval(tick, 20000);
+
+  // scrollspy: the active section is the current "window"
+  const links = [...document.querySelectorAll("nav.status a[href^='#']")];
+  const byId = Object.fromEntries(links.map(a => [a.hash.slice(1), a]));
+  const observer = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (e.isIntersecting) {
+        links.forEach(a => a.classList.remove("active"));
+        byId[e.target.id]?.classList.add("active");
+      }
+    }
+  }, { rootMargin: "-40% 0px -55% 0px" });
+  document.querySelectorAll("section[id]").forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>
