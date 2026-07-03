@@ -2,6 +2,12 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.2] — 2026-07-03
+
+macOS release carrying the changes listed under 2026.07.1: sending files to
+Claude Code (drag & drop or the paperclip button) and the clipboard-copy
+fix.
+
 ## [2026.07.1] — 2026-07-03
 
 First calendar-versioned release (`YYYY.MM.N`, one counter shared by macOS
