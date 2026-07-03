@@ -3,6 +3,16 @@
     <channel>
         <title>Belfry</title>
         <item>
+            <title>0.3.1</title>
+            <pubDate>Fri, 03 Jul 2026 01:15:46 +0100</pubDate>
+            <link>https://belfry.robgough.net</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/robgough/belfry/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>24</sparkle:version>
+            <sparkle:shortVersionString>0.3.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/robgough/belfry/releases/download/v0.3.1/Belfry-0.3.1.zip" length="15873277" type="application/octet-stream" sparkle:edSignature="XhhSrk1LrGOFO3Vfs75U/jAze98uImORpCDnZcF0dg92td8qMJvbGxhuQNBOx5ahuyFnxAu24s2k+YYNN2aGDQ=="/>
+        </item>
+        <item>
             <title>0.3.0</title>
             <pubDate>Fri, 03 Jul 2026 00:35:13 +0100</pubDate>
             <link>https://belfry.robgough.net</link>
