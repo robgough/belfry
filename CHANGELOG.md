@@ -2,10 +2,18 @@
 
 All notable changes to Belfry are documented here.
 
-## [Unreleased]
+## [2026.07.1] — 2026-07-03
+
+First calendar-versioned release (`YYYY.MM.N`, one counter shared by macOS
+and iPadOS/iOS) — and the first to ship through TestFlight. This release is
+iPadOS/iOS only; the macOS items below reach Mac users with the next macOS
+release.
 
 ### Added
 
+- **iPadOS/iOS via TestFlight**: the iPad/iPhone app now ships as a
+  TestFlight build (previously build-from-source only), with a signed
+  archive + upload pipeline to App Store Connect.
 - **Send files to Claude Code** (macOS): drag images — or any file — onto the
   terminal, or click the new paperclip toolbar button. The file's path is
   pasted into the prompt (as a bracketed paste, so Claude Code treats it as
