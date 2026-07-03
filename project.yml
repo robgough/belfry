@@ -59,7 +59,7 @@ targets:
         # Version/build defaults for Xcode-GUI builds; scripts/release_ios.sh
         # overrides both at archive time (build = git rev-list --count HEAD,
         # same scheme as the macOS app).
-        MARKETING_VERSION: "0.3.1"
+        MARKETING_VERSION: "2026.07.1"
         CURRENT_PROJECT_VERSION: "1"
         # Export compliance: only standard, exempt encryption (SSH via
         # SwiftNIO SSH / CryptoKit) — lets TestFlight builds skip the

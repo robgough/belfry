@@ -2,9 +2,13 @@
 # Archive the iOS/iPadOS app and upload it to App Store Connect, where it
 # lands in TestFlight once Apple finishes processing.
 #
-# Usage: scripts/release_ios.sh <version> [--export-only]
+# Usage: scripts/release_ios.sh [version] [--export-only]
 #
 #   --export-only   produce .build/ios/export/Belfry.ipa instead of uploading
+#
+# Version defaults to the next calendar release (YYYY.MM.N, N = nth release
+# this month across both platforms), derived from existing v* tags — which
+# is why releases must be tagged (see RELEASING.md).
 #
 # Signing is automatic (cloud-managed) for team 5Z5EG95CQL — the first run
 # creates the Apple Distribution certificate and provisioning profile for
@@ -16,8 +20,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:?usage: scripts/release_ios.sh <version> [--export-only]}"
-EXPORT_ONLY="${2:-}"
+VERSION=""
+EXPORT_ONLY=""
+for arg in "$@"; do
+    case "$arg" in
+        --export-only) EXPORT_ONLY="--export-only" ;;
+        *) VERSION="$arg" ;;
+    esac
+done
+if [ -z "$VERSION" ]; then
+    YM="$(date +%Y.%m)"
+    LAST="$(git tag --list "v$YM.*" | sed "s/^v$YM\.//" | sort -n | tail -1)"
+    VERSION="$YM.$((${LAST:-0} + 1))"
+    echo "› version $VERSION (next untagged $YM release)"
+fi
 TEAM_ID="5Z5EG95CQL"
 # Same build-number scheme as the macOS release: commit count, so commit
 # before building — App Store Connect requires each upload to increase it.

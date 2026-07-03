@@ -2,7 +2,11 @@
 # Build, sign, notarize and staple a distributable Belfry.app, producing
 # Belfry-<version>.zip ready to attach to a GitHub release.
 #
-# Usage: scripts/release.sh <version> [--skip-notarize]
+# Usage: scripts/release.sh [version] [--skip-notarize]
+#
+# Version defaults to the next calendar release (YYYY.MM.N, N = nth release
+# this month across both platforms), derived from existing v* tags — which
+# is why releases must be tagged (see RELEASING.md).
 #
 # Needs in the keychain:
 #   - a "Developer ID Application" identity (override with SIGN_IDENTITY=<hash>
@@ -14,8 +18,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:?usage: scripts/release.sh <version> [--skip-notarize]}"
-SKIP_NOTARIZE="${2:-}"
+VERSION=""
+SKIP_NOTARIZE=""
+for arg in "$@"; do
+    case "$arg" in
+        --skip-notarize) SKIP_NOTARIZE="--skip-notarize" ;;
+        *) VERSION="$arg" ;;
+    esac
+done
+if [ -z "$VERSION" ]; then
+    YM="$(date +%Y.%m)"
+    LAST="$(git tag --list "v$YM.*" | sed "s/^v$YM\.//" | sort -n | tail -1)"
+    VERSION="$YM.$((${LAST:-0} + 1))"
+    echo "› version $VERSION (next untagged $YM release)"
+fi
 PROFILE="${NOTARY_PROFILE:-belfry-notary}"
 IDENTITY="${SIGN_IDENTITY:-Developer ID Application}"
 BUILD_NUM="$(git rev-list --count HEAD)"

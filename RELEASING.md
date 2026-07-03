@@ -4,6 +4,16 @@ Two independent pipelines: the macOS app ships as a notarized zip + Sparkle
 appcast (below), the iOS/iPadOS app ships through TestFlight
 ([jump to iOS](#releasing-belfry-iosipados--testflight)).
 
+## Versioning
+
+Calendar releases: **`YYYY.MM.N`** (zero-padded month; `N` = nth release
+that month, one counter shared by both platforms — `2026.07.2` may well be
+iOS-only). Run either release script with no version argument and it picks
+the next `N` from existing `v*` tags — which is why every release gets a
+tag, even iOS ones. Build numbers are `git rev-list --count HEAD`
+everywhere, and Sparkle orders updates by build number, so the switch from
+the old semver scheme (≤ 0.3.1) needed no migration.
+
 # Releasing Belfry (macOS)
 
 The release is a notarized, stapled, universal (arm64 + x86_64) `Belfry.app`,
@@ -44,7 +54,7 @@ These live in the login keychain and only need doing again on a new machine:
    wait is Apple's notary service):
 
    ```sh
-   SIGN_IDENTITY=<cert-sha1-or-name> ./scripts/release.sh X.Y.Z
+   SIGN_IDENTITY=<cert-sha1-or-name> ./scripts/release.sh   # or pass an explicit YYYY.MM.N
    ```
 
    This produces `Belfry-X.Y.Z.zip` (gitignored) and rewrites
@@ -127,13 +137,22 @@ team `5Z5EG95CQL` — no local distribution certificate to look after.
 2. **Archive and upload:**
 
    ```sh
-   ./scripts/release_ios.sh X.Y.Z
+   ./scripts/release_ios.sh   # or pass an explicit YYYY.MM.N
    ```
 
    (`--export-only` instead produces `.build/ios/export/Belfry.ipa`
    without uploading, for testing the pipeline.)
 
-3. **Wait for processing** (minutes; App Store Connect emails when done),
+3. **Tag it** — the version counter is derived from tags, so an untagged
+   release means the next auto-version collides with this one. Skip if the
+   same version was already tagged by a joint macOS release:
+
+   ```sh
+   git tag -a vX.Y.Z -m "Belfry X.Y.Z (iOS)"
+   git push origin vX.Y.Z
+   ```
+
+4. **Wait for processing** (minutes; App Store Connect emails when done),
    then under the app's **TestFlight** tab add the build to a tester group.
    Internal testers (your App Store Connect users) get it immediately; the
    first build for external testers goes through Beta App Review.
