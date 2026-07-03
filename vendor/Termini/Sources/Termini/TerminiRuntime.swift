@@ -66,7 +66,11 @@ final class TerminiRuntime: ObservableObject {
             confirm_read_clipboard_cb: { userdata, string, state, _ in
                 TerminiRuntime.confirmReadClipboard(userdata, string: string, state: state)
             },
-            write_clipboard_cb: { _, _, _, _, _ in
+            // Sessionator patch: upstream left this empty, so nothing copied
+            // from the terminal (⌘C / copy-on-select / a tmux OSC 52 write)
+            // ever reached the system pasteboard.
+            write_clipboard_cb: { userdata, location, contents, count, _ in
+                TerminiRuntime.writeClipboard(userdata, location: location, contents: contents, count: count)
             },
             write_to_host_cb: { surfaceUserdata, bytes, count in
                 TerminiRuntime.writeToHost(surfaceUserdata, bytes, count)
@@ -154,6 +158,28 @@ final class TerminiRuntime: ObservableObject {
         guard let view = surfaceView(from: userdata),
               let string else { return }
         view.completeClipboardRequest(String(cString: string), state: state, confirmed: true)
+        #endif
+    }
+
+    /// Sessionator patch: deliver terminal-originated clipboard writes to the
+    /// surface's pasteboard. `contents` is an array of (mime, data) entries.
+    private static func writeClipboard(
+        _ userdata: UnsafeMutableRawPointer?,
+        location: ghostty_clipboard_e,
+        contents: UnsafePointer<ghostty_clipboard_content_s>?,
+        count: Int
+    ) {
+        #if canImport(AppKit)
+        guard let view = surfaceView(from: userdata),
+              let contents, count > 0 else { return }
+        var entries: [(mime: String, string: String)] = []
+        for index in 0..<Int(count) {
+            let entry = contents[index]
+            guard let data = entry.data else { continue }
+            let mime = entry.mime.map { String(cString: $0) } ?? "text/plain"
+            entries.append((mime, String(cString: data)))
+        }
+        view.writeClipboard(entries, location: location)
         #endif
     }
 

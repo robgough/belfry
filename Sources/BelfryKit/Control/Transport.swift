@@ -34,6 +34,9 @@ protocol TerminalWorkspace: AnyObject {
     func resize(columns: Int, rows: Int)
     /// Route keyboard focus to this surface (after selection).
     func focus()
+    /// Write raw bytes into the session's input exactly as if typed — the
+    /// attach / drag-and-drop path uses this to paste staged file paths.
+    func sendInput(_ data: Data)
     /// The rendered terminal view for this workspace. Called on every SwiftUI
     /// update — must return a view over persistent state (the terminal engine
     /// lives in the workspace, not the returned value).

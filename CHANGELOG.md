@@ -2,6 +2,27 @@
 
 All notable changes to Belfry are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Send files to Claude Code** (macOS): drag images — or any file — onto the
+  terminal, or click the new paperclip toolbar button. The file's path is
+  pasted into the prompt (as a bracketed paste, so Claude Code treats it as
+  one insertion); on SSH hosts the file is first uploaded over the existing
+  multiplexed connection into `~/.cache/belfry/drops/` (self-cleaning after a
+  week) and the remote path is pasted instead. Drops accept Finder files,
+  file promises (Photos, Safari, the screenshot thumbnail), and raw image
+  data from web pages.
+
+### Fixed
+
+- **Copying out of the terminal works** (macOS): ⌘C and Edit ▸ Copy now copy
+  the selection, and tmux copy-mode clipboard writes (OSC 52) reach the
+  system clipboard. The embedded terminal's clipboard-write path was
+  previously a stub, so nothing selected in a Belfry terminal could be
+  copied at all.
+
 ## [0.3.1] — 2026-07-03
 
 ### Fixed

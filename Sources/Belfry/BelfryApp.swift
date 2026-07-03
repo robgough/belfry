@@ -70,6 +70,7 @@ struct RootView: View {
         } detail: {
             TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize)
                 .background(AppTheme.windowBackground)
+                .terminalAttachments(hosts: model.hosts, selection: selection)
         }
         .navigationTitle("Belfry")
         .tint(AppTheme.accent)

@@ -2,6 +2,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import GhosttyKit
 
 /// SwiftUI wrapper that embeds the live Ghostty surface.
@@ -699,12 +700,18 @@ public final class SurfaceContainerView: NSView {
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
         guard window?.firstResponder === self else { return false }
-        guard event.modifierFlags.contains(.command),
-              event.charactersIgnoringModifiers?.lowercased() == "v" else {
+        guard event.modifierFlags.contains(.command) else { return false }
+
+        // Sessionator patch: ⌘C alongside the existing ⌘V. With no selection
+        // the copy action reports failure and the event falls through.
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "v":
+            return pasteFromClipboard()
+        case "c":
+            return copyToClipboard()
+        default:
             return false
         }
-
-        return pasteFromClipboard()
     }
 
     private func modsFromFlags(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
@@ -929,6 +936,33 @@ public final class SurfaceContainerView: NSView {
         _ = pasteFromClipboard()
     }
 
+    // Sessionator patch: Edit ▸ Copy (the menu item is enabled by this
+    // selector existing on the responder chain).
+    @IBAction public func copy(_ sender: Any?) {
+        _ = copyToClipboard()
+    }
+
+    /// Sessionator patch: terminal-originated clipboard writes (⌘C /
+    /// copy-on-select / OSC 52 from tmux) delivered via `write_clipboard_cb`.
+    func writeClipboard(_ entries: [(mime: String, string: String)], location: ghostty_clipboard_e) {
+        guard let pasteboard = pasteboard(for: location), !entries.isEmpty else { return }
+        pasteboard.clearContents()
+        for entry in entries {
+            let type: NSPasteboard.PasteboardType?
+            switch entry.mime {
+            case "text/plain":
+                type = .string
+            case "text/html":
+                type = .html
+            default:
+                type = UTType(mimeType: entry.mime).map { NSPasteboard.PasteboardType($0.identifier) }
+            }
+            guard let type else { continue }
+            pasteboard.setString(entry.string, forType: type)
+        }
+        logInput("writeClipboard \(entries.count) entr\(entries.count == 1 ? "y" : "ies")")
+    }
+
     func readClipboard(
         location: ghostty_clipboard_e,
         state: UnsafeMutableRawPointer?
@@ -963,6 +997,20 @@ public final class SurfaceContainerView: NSView {
         )
         requestActiveRenderBurst(duration: 0.35)
         logInput("paste_from_clipboard \(success ? "succeeded" : "failed")")
+        return success
+    }
+
+    // Sessionator patch: copy the surface's selection (delivered back through
+    // `write_clipboard_cb`). Returns false when there's nothing selected.
+    private func copyToClipboard() -> Bool {
+        guard let surface else { return false }
+        let action = "copy_to_clipboard"
+        let success = ghostty_surface_binding_action(
+            surface,
+            action,
+            UInt(action.lengthOfBytes(using: .utf8))
+        )
+        logInput("copy_to_clipboard \(success ? "succeeded" : "failed")")
         return success
     }
 

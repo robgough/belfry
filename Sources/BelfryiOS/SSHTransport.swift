@@ -254,6 +254,10 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         _ = terminalView.becomeFirstResponder()
     }
 
+    func sendInput(_ data: Data) {
+        session.send(data)
+    }
+
     /// Toolbar keyboard toggle. Hiding drops first-responder status, which
     /// dismisses *everything* — the system keyboard and SwiftTerm's accessory
     /// strip — giving the terminal the whole screen. Showing resets the input

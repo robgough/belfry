@@ -125,6 +125,10 @@ extension TerminiLocalPTYWorkspace: TerminalWorkspace {
         controller.focus()
     }
 
+    func sendInput(_ data: Data) {
+        send(data)
+    }
+
     func makeSurfaceView(fontSize: Double?, isVisible: Bool) -> AnyView {
         AnyView(
             TerminiTerminalView(controller: controller,

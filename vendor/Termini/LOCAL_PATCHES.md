@@ -84,3 +84,14 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
     status lines, so failure diagnostics flow too) bypass the terminal
     controller entirely. Lets a control-plane client reuse the SSH session
     machinery without pretending to be a rendered terminal.
+
+- **`TerminiRuntime.swift` + `TerminiSurfaceView.swift` — clipboard copy.**
+  Upstream's `write_clipboard_cb` was an empty stub and the surface view only
+  implemented paste, so nothing could get *out* of the terminal: ⌘C did
+  nothing (Edit ▸ Copy stayed disabled — no `copy(_:)` on the responder
+  chain), and OSC 52 clipboard writes (tmux copy-mode with `set-clipboard`)
+  were silently dropped. The callback now writes its (mime, data) entries to
+  the surface's pasteboard (`text/plain` → `.string`, `text/html` → `.html`,
+  anything else via `UTType(mimeType:)`), and the view implements `copy(_:)`
+  plus ⌘C in `performKeyEquivalent`, both driving ghostty's
+  `copy_to_clipboard` binding action.
