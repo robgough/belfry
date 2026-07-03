@@ -154,6 +154,26 @@ private final class ScrollbackPanRecognizer: UIPanGestureRecognizer {}
 /// instances never attach. Our `ScrollbackPanRecognizer` subclass and system
 /// internals (which use their own subclasses) pass through untouched.
 final class BelfryTerminalView: SwiftTerm.TerminalView {
+    /// The terminal currently holding the keyboard, if any. Selection changes
+    /// consult this: focus is only *transferred* between terminals, never
+    /// conjured — the keyboard stays down until the user summons it (tap or
+    /// toolbar button) and stays up across session switches once they have.
+    private(set) static weak var keyboardOwner: BelfryTerminalView?
+
+    override func becomeFirstResponder() -> Bool {
+        // super resigns the previous responder first, so assign after: the
+        // old view's resign clears the slot, then we claim it.
+        let became = super.becomeFirstResponder()
+        if became { Self.keyboardOwner = self }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned, Self.keyboardOwner === self { Self.keyboardOwner = nil }
+        return resigned
+    }
+
     override func addGestureRecognizer(_ gestureRecognizer: UIGestureRecognizer) {
         if type(of: gestureRecognizer) == UIPanGestureRecognizer.self {
             return
@@ -251,7 +271,19 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     }
 
     func focus() {
-        _ = terminalView.becomeFirstResponder()
+        // Selecting a window must not summon the keyboard — screen space is
+        // precious on touch. But if the keyboard is already up (some terminal
+        // holds it), take it over so keystrokes follow the visible session.
+        guard BelfryTerminalView.keyboardOwner != nil else { return }
+        if !terminalView.becomeFirstResponder() {
+            // A just-activated surface isn't in the window yet (SwiftUI mounts
+            // it on the next update), so the takeover fails. Retry a tick
+            // later — re-checking, in case the keyboard went away meanwhile.
+            DispatchQueue.main.async { [terminalView] in
+                guard BelfryTerminalView.keyboardOwner != nil else { return }
+                _ = terminalView.becomeFirstResponder()
+            }
+        }
     }
 
     func sendInput(_ data: Data) {

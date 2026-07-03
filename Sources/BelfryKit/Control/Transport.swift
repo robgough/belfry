@@ -32,7 +32,9 @@ protocol TerminalWorkspace: AnyObject {
     func start()
     func stop()
     func resize(columns: Int, rows: Int)
-    /// Route keyboard focus to this surface (after selection).
+    /// Route keyboard focus to this surface (after selection). On iOS this
+    /// must not summon the on-screen keyboard — it only transfers focus when
+    /// the keyboard is already up.
     func focus()
     /// Write raw bytes into the session's input exactly as if typed — the
     /// attach / drag-and-drop path uses this to paste staged file paths.
