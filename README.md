@@ -46,6 +46,9 @@ open BelfryiOS.xcodeproj        # set your team under Signing, then run
 
 Add hosts in-app: hostname, user, port, and either a password or an unencrypted ed25519 private key (paste the PEM; generate a dedicated one with `ssh-keygen -t ed25519`). Secrets are stored in the Keychain, never in the hosts file. The remote end needs `sshd` and `tmux` — and if you want your dev machines reachable from anywhere, [Tailscale](https://tailscale.com) pairs beautifully with this.
 
+Cutting a signed, notarized release (with the Sparkle appcast): see
+[RELEASING.md](RELEASING.md).
+
 ## Architecture, briefly
 
 Each host gets two planes. The **control plane** is a `tmux -C` client attached to a hidden per-launch session — it feeds the sidebar and issues actions, and never sizes your real sessions. The **data plane** is one terminal surface per visited session running `tmux attach`. Both ride a per-platform transport behind a small seam: macOS forks PTYs (and drives the system `ssh` with connection sharing and a native askpass dialog); iOS speaks SSH in-process via SwiftNIO, running tmux as exec channels.

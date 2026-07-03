@@ -31,7 +31,10 @@ struct BelfryApp: App {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Updater.controller?.checkForUpdates(nil) }
             }
-            CommandMenu("View") {
+            // Extend the SYSTEM View menu (the one NavigationSplitView owns)
+            // rather than CommandMenu("View"), which would add a second menu
+            // with the same name next to it.
+            CommandGroup(after: .sidebar) {
                 Button("Increase Font Size") { model.increaseFont() }
                     .keyboardShortcut("+", modifiers: .command)
                 // Also catch ⌘= (the +/= key without Shift), which doesn't match "+".
