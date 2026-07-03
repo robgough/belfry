@@ -2,6 +2,13 @@
 
 All notable changes to Belfry are documented here.
 
+## [0.3.1] — 2026-07-03
+
+### Fixed
+
+- The menu bar showed two View menus: the font-size commands now live in the
+  system View menu (alongside Enter Full Screen) instead of a duplicate.
+
 ## [0.3.0] — 2026-07-03
 
 ### Added
