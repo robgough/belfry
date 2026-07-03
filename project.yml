@@ -41,6 +41,11 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Belfry
+        # Deliberately distinct from the macOS app's net.robgough.belfry —
+        # the Mac app can't ever ship via the App Store (sandbox vs local
+        # tmux/PTY/launchd), so there's no universal-purchase record to
+        # share, and distinct IDs avoid Launch Services collisions if the
+        # iPad app ever runs on Macs alongside the direct-download app.
         PRODUCT_BUNDLE_IDENTIFIER: net.robgough.belfry.ios
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -50,3 +55,17 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 5Z5EG95CQL
+        # Version/build defaults for Xcode-GUI builds; scripts/release_ios.sh
+        # overrides both at archive time (build = git rev-list --count HEAD,
+        # same scheme as the macOS app).
+        MARKETING_VERSION: "0.3.1"
+        CURRENT_PROJECT_VERSION: "1"
+        # Export compliance: only standard, exempt encryption (SSH via
+        # SwiftNIO SSH / CryptoKit) — lets TestFlight builds skip the
+        # per-build compliance questionnaire.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        # GhosttyKit.xcframework (via Termini) ships no x86_64 simulator
+        # slice, so Intel-simulator builds can't link. Device archives are
+        # arm64-only and unaffected.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64

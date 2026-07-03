@@ -1,3 +1,9 @@
+# Releasing Belfry
+
+Two independent pipelines: the macOS app ships as a notarized zip + Sparkle
+appcast (below), the iOS/iPadOS app ships through TestFlight
+([jump to iOS](#releasing-belfry-iosipados--testflight)).
+
 # Releasing Belfry (macOS)
 
 The release is a notarized, stapled, universal (arm64 + x86_64) `Belfry.app`,
@@ -90,3 +96,58 @@ These live in the login keychain and only need doing again on a new machine:
 - Sparkle tools are fetched automatically to `.build/sparkle-tools/` when
   missing; pin bumps happen in `scripts/release.sh` (tarball URL) and
   `Package.swift` together.
+
+# Releasing Belfry (iOS/iPadOS → TestFlight)
+
+The iOS app ships through TestFlight: archive, upload to App Store Connect,
+wait for processing, add testers. Signing is cloud-managed (automatic) for
+team `5Z5EG95CQL` — no local distribution certificate to look after.
+
+## One-time setup
+
+- **App record in App Store Connect** — [appstoreconnect.apple.com](https://appstoreconnect.apple.com)
+  → My Apps → **+** → New App: platform iOS, bundle ID
+  `net.robgough.belfry.ios`, SKU anything (e.g. `belfry-ios`). If the bundle
+  ID isn't in the picker, the first archive run registers it (cloud signing
+  does this automatically) — or add it by hand under
+  [Identifiers](https://developer.apple.com/account/resources/identifiers).
+  Uploads fail with "no suitable application records" until this exists.
+- **Credentials for xcodebuild** — either stay signed into the team's
+  Apple ID in Xcode (Settings → Accounts; already done on hailmary), or
+  create an App Store Connect API key (Users and Access → Integrations)
+  and export `ASC_KEY_ID` / `ASC_ISSUER_ID` with the `.p8` at
+  `~/.appstoreconnect/private_keys/`.
+
+## Cutting a build
+
+1. **Commit first** — the build number is `git rev-list --count HEAD`
+   (same scheme as macOS), and App Store Connect insists each upload's
+   build number increases.
+
+2. **Archive and upload:**
+
+   ```sh
+   ./scripts/release_ios.sh X.Y.Z
+   ```
+
+   (`--export-only` instead produces `.build/ios/export/Belfry.ipa`
+   without uploading, for testing the pipeline.)
+
+3. **Wait for processing** (minutes; App Store Connect emails when done),
+   then under the app's **TestFlight** tab add the build to a tester group.
+   Internal testers (your App Store Connect users) get it immediately; the
+   first build for external testers goes through Beta App Review.
+
+## Gotchas
+
+- **Export compliance** is answered in the binary:
+  `ITSAppUsesNonExemptEncryption = NO` in `project.yml` (the app's crypto
+  is standard SSH via SwiftNIO SSH/CryptoKit, which is exempt), so
+  TestFlight skips the per-build questionnaire.
+- **Intel simulators can't link** — GhosttyKit.xcframework ships no
+  x86_64 simulator slice, so `x86_64` is excluded for simulator builds in
+  `project.yml`. Device archives are arm64-only and unaffected.
+- **Beta Xcode uploads**: App Store Connect sometimes rejects binaries
+  built with beta SDKs outside a beta cycle. If the upload bounces with an
+  SDK/toolchain error, install release Xcode and re-run (the script picks
+  `/Applications/Xcode.app` over `Xcode-beta.app` when both exist).
