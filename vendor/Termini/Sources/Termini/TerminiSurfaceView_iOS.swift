@@ -58,6 +58,13 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
     /// it also runs on the main thread).
     private var surfaceIOReady = false
     private var pendingOutput = Data()
+    // MARK: Sessionator patch — off-main output feed (deadlock fix).
+    /// Serial queue that hands terminal output to libghostty. See the macOS
+    /// SurfaceContainerView for the full story: `ghostty_surface_process_output`
+    /// blocks when a burst generates more host notifications than ghostty's
+    /// 64-slot app mailbox holds, and only a main-thread `ghostty_app_tick`
+    /// drains it — feeding on the main thread could therefore deadlock.
+    private let outputFeedQueue = DispatchQueue(label: "dev.arach.Termini.surface-output-feed")
     private var renderLink: CADisplayLink?
     private weak var controller: TerminiTerminalController?
     private var lastReportedSize: TerminiTerminalSize?
@@ -378,10 +385,26 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
             pendingOutput.append(data)
             return
         }
-        data.withUnsafeBytes { buffer in
-            guard let ptr = buffer.bindMemory(to: CChar.self).baseAddress else { return }
-            ghostty_surface_process_output(surface, ptr, UInt(data.count))
+        // Feed off-main (see outputFeedQueue). `guard let self` keeps the view
+        // alive for the duration of the call, so deinit — the only place the
+        // surface is freed — cannot run mid-feed; blocks that only start after
+        // deinit see a nil weak self and skip the freed pointer.
+        outputFeedQueue.async { [weak self] in
+            guard let self else { return }
+            withExtendedLifetime(self) {
+                data.withUnsafeBytes { buffer in
+                    guard let ptr = buffer.bindMemory(to: CChar.self).baseAddress else { return }
+                    ghostty_surface_process_output(surface, ptr, UInt(data.count))
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.drawAfterRemoteOutput()
+            }
         }
+    }
+
+    private func drawAfterRemoteOutput() {
+        guard let surface else { return }
         ghostty_surface_refresh(surface)
         ghostty_surface_draw(surface)
         reportDiagnostics()

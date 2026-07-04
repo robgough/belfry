@@ -102,6 +102,21 @@ public final class SurfaceContainerView: NSView {
     /// render burst timer coalesces the rest.
     private var lastOutputDraw: TimeInterval = 0
     private let minOutputDrawInterval: TimeInterval = 1.0 / 60.0
+    // MARK: Sessionator patch — off-main output feed (deadlock fix).
+    /// Serial queue that hands terminal output to libghostty.
+    ///
+    /// `ghostty_surface_process_output` can block: escape sequences that
+    /// notify the host (set_title, set_mouse_shape from DEC mouse-mode
+    /// toggles, pwd/color changes, …) are pushed onto ghostty's app-wide
+    /// 64-slot mailbox, and when it's full the push waits until
+    /// `ghostty_app_tick` drains it — and that tick runs on the MAIN thread.
+    /// Feeding output on the main thread therefore deadlocked the whole app
+    /// when one coalesced burst carried >64 such sequences (e.g. a tmux
+    /// pane-split redraw from a local PTY with `mouse on`): beachball,
+    /// force-quit. Upstream ghostty always feeds from a dedicated read
+    /// thread, so we do the same — the serial queue preserves byte order,
+    /// and a full mailbox self-heals on the next main-thread tick.
+    private let outputFeedQueue = DispatchQueue(label: "dev.arach.Termini.surface-output-feed")
 
     private var canRender: Bool {
         isRenderVisible && windowIsVisible && window != nil && surface != nil
@@ -514,10 +529,26 @@ public final class SurfaceContainerView: NSView {
             pendingOutput.append(data)
             return
         }
-        data.withUnsafeBytes { buffer in
-            guard let ptr = buffer.bindMemory(to: CChar.self).baseAddress else { return }
-            ghostty_surface_process_output(surface, ptr, UInt(data.count))
+        // Feed off-main (see outputFeedQueue). `guard let self` keeps the view
+        // alive for the duration of the call, so deinit — the only place the
+        // surface is freed — cannot run mid-feed; blocks that only start after
+        // deinit see a nil weak self and skip the freed pointer.
+        outputFeedQueue.async { [weak self] in
+            guard let self else { return }
+            withExtendedLifetime(self) {
+                data.withUnsafeBytes { buffer in
+                    guard let ptr = buffer.bindMemory(to: CChar.self).baseAddress else { return }
+                    ghostty_surface_process_output(surface, ptr, UInt(data.count))
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.drawAfterRemoteOutput()
+            }
         }
+    }
+
+    private func drawAfterRemoteOutput() {
+        guard let surface else { return }
         // Sessionator patch: hidden surfaces absorb output without drawing (a
         // busy background session must not render invisibly); the reveal path
         // does one catch-up draw. Visible surfaces draw immediately for snappy

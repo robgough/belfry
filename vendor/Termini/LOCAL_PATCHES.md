@@ -67,6 +67,30 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
     drawing synchronously per chunk. Render timers gained tolerance so the OS can
     coalesce their wakeups.
 
+- **`TerminiSurfaceView.swift` + `TerminiSurfaceView_iOS.swift` — terminal
+  output fed to libghostty off the main thread (deadlock fix).**
+  `processRemoteOutput` called `ghostty_surface_process_output` on the main
+  thread. Inside ghostty, escape sequences that notify the host — `set_title`,
+  `set_mouse_shape` (one per DEC mouse-mode toggle 1000/1002/1003/1006),
+  pwd/color changes — are pushed onto the app-wide 64-slot mailbox
+  (`BlockingQueue(Message, 64)` in ghostty's `App.zig`); when it fills, the
+  push blocks until `ghostty_app_tick` drains it, and that tick only runs on
+  the main thread. One coalesced output burst carrying >64 such sequences
+  (easy on a local PTY with 128 KB coalescing: a tmux pane-split redraw with
+  `mouse on` toggles mouse modes around every redraw cycle) blocked the main
+  thread forever — beachball, force-quit required. Upstream ghostty never
+  hits this because it feeds output from a dedicated read thread while the
+  apprt main thread keeps ticking. We now do the same: each surface hands
+  output to `ghostty_surface_process_output` on a private serial
+  `outputFeedQueue` (byte order preserved; the feed block retains the view so
+  `deinit` can't free the surface mid-call), then hops back to the main
+  thread for the existing refresh/draw gating (`drawAfterRemoteOutput`). A
+  full mailbox now merely stalls the feed queue until the next tick drains
+  it. This generalizes the `surfaceIOReady` startup buffering (same deadlock
+  class at surface creation), which stays as-is. Evidenced by
+  `Belfry_2026-07-04-*.hang` reports: main thread parked in `__ulock_wait2`
+  under `processRemoteOutput` with ghostty's io/renderer threads idle.
+
 - **`TerminiLocalPTYProcess.swift` — coalesced PTY reads.** `drainOutput()` emitted
   one `onOutput` callback (→ one main-thread hop + one terminal feed) per 4 KB
   `read()`. All bytes readable in a drain pass are now batched into a single
