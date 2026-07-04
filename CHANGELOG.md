@@ -2,6 +2,27 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.7] — 2026-07-04
+
+iPadOS/iOS-only TestFlight release fixing two regressions the sidebar rework
+(2026.07.5/6) introduced on touch devices:
+
+### Fixed
+
+- **iPhone: selecting a window shows its terminal again.** The reworked
+  sidebar broke navigation on compact screens, leaving the terminal
+  unreachable from the window list.
+- **iPad/iPhone: host header actions are visible.** New-session and
+  connect/disconnect buttons were hover-only, which never shows on touch;
+  they're now always present on iOS (splits and kills remain in the
+  long-press menus).
+
+## [2026.07.6] — 2026-07-04
+
+iPadOS/iOS-only TestFlight release: the 2026.07.4 output-feed deadlock fix
+for the terminal view, plus the 2026.07.5 sidebar improvements (machine
+grouping, tmux-following selection, session-selector drift recovery).
+
 ## [2026.07.5] — 2026-07-04
 
 ### Added
