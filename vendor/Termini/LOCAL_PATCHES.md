@@ -109,6 +109,19 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
     controller entirely. Lets a control-plane client reuse the SSH session
     machinery without pretending to be a rendered terminal.
 
+- **`TerminiSurfaceView.swift` — correct scroll-event semantics (scrolling was
+  far too fast).** `ghostty_surface_mouse_scroll`'s last argument is a scroll
+  mods bitmask — bit 0 = precision flag, bits 1–3 = momentum phase (ghostty
+  `src/input/mouse.zig`) — but upstream passed the *keyboard* modifier
+  bitmask and never set precision. Ghostty therefore treated trackpad pixel
+  deltas as discrete wheel ticks, multiplying each by the cell height: one
+  line scrolled per pixel of finger travel, and holding shift while
+  scrolling flipped the precision bit. Now mirrors ghostty's own AppKit
+  surface view: `hasPreciseScrollingDeltas` sets the precision flag (deltas
+  are pixels, with ghostty's 2x feel multiplier), discrete wheel ticks pass
+  through unscaled, and `momentumPhase` is forwarded so inertial scrolling
+  decays properly.
+
 - **`TerminiRuntime.swift` + `TerminiSurfaceView.swift` — clipboard copy.**
   Upstream's `write_clipboard_cb` was an empty stub and the surface view only
   implemented paste, so nothing could get *out* of the terminal: ⌘C did
