@@ -2,6 +2,16 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.9] — 2026-07-04
+
+iPadOS/iOS-only TestFlight release:
+
+### Fixed
+
+- **Bigger touch targets in the sidebar**: window rows are 40pt tall and the
+  inline action buttons have finger-sized hit areas (the flattened tree in
+  2026.07.8 had left both at pointer sizes).
+
 ## [2026.07.8] — 2026-07-04
 
 iPadOS/iOS-only TestFlight release:
