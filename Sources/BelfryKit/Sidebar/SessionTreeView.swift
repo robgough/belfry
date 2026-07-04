@@ -48,12 +48,23 @@ struct SessionTreeView: View {
         let sessionID: String
     }
 
+    /// Row height: dense on macOS (pointer precision); comfortably tappable
+    /// on iOS — 40pt keeps the tree compact while staying close to the 44pt
+    /// touch-target guideline (the full row width is the target).
+    static var minRowHeight: CGFloat {
+        #if os(iOS)
+        40
+        #else
+        26
+        #endif
+    }
+
     var body: some View {
         platformList
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .background(AppTheme.sidebarBackground)
-        .environment(\.defaultMinListRowHeight, 26)
+        .environment(\.defaultMinListRowHeight, Self.minRowHeight)
         // tmux is authoritative for the active window: switching windows with
         // tmux keys (prefix-n, status-bar clicks) moves the active flag on the
         // next store refresh, and the sidebar selection follows instead of
@@ -219,12 +230,29 @@ private struct HoverIconButton: View {
     let hint: String
     let action: () -> Void
 
+    /// Pointer targets can be small; fingers need room (≥ ~28pt hit area on
+    /// iOS, with a slightly larger glyph so it doesn't float in space).
+    static var iconSize: CGFloat {
+        #if os(iOS)
+        13
+        #else
+        10.5
+        #endif
+    }
+    static var hitSize: CGSize {
+        #if os(iOS)
+        CGSize(width: 30, height: 30)
+        #else
+        CGSize(width: 18, height: 16)
+        #endif
+    }
+
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: Self.iconSize, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 18, height: 16)
+                .frame(width: Self.hitSize.width, height: Self.hitSize.height)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
