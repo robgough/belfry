@@ -49,17 +49,7 @@ struct SessionTreeView: View {
     }
 
     var body: some View {
-        List {
-            ForEach(hosts) { host in
-                Section(isExpanded: expansionBinding(for: host)) {
-                    HostBody(host: host, model: model,
-                             selection: $selection, prompt: $prompt, confirm: $confirm)
-                } header: {
-                    HostHeader(host: host, model: model, isExpanded: expansionBinding(for: host),
-                               prompt: $prompt, confirm: $confirm)
-                }
-            }
-        }
+        platformList
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .background(AppTheme.sidebarBackground)
@@ -86,6 +76,31 @@ struct SessionTreeView: View {
         // the selected session drops one client while another gains one.
         .onChange(of: attachSnapshot) { old, new in
             resolveSurfaceDrift(old: old, new: new)
+        }
+    }
+
+    /// macOS renders selection itself (soft theme-accent pill) so the List
+    /// carries no selection binding. iOS MUST use native List selection: in a
+    /// collapsed NavigationSplitView (iPhone) only a native selection change
+    /// pushes the detail column — a custom tap gesture updates state the
+    /// split view can't see, leaving the terminal unreachable.
+    @ViewBuilder private var platformList: some View {
+        #if os(iOS)
+        List(selection: $selection) { treeSections }
+        #else
+        List { treeSections }
+        #endif
+    }
+
+    @ViewBuilder private var treeSections: some View {
+        ForEach(hosts) { host in
+            Section(isExpanded: expansionBinding(for: host)) {
+                HostBody(host: host, model: model,
+                         selection: $selection, prompt: $prompt, confirm: $confirm)
+            } header: {
+                HostHeader(host: host, model: model, isExpanded: expansionBinding(for: host),
+                           prompt: $prompt, confirm: $confirm)
+            }
         }
     }
 
@@ -156,6 +171,31 @@ struct SessionTreeView: View {
     }
 }
 
+/// macOS-only tap-to-select: iOS rows select natively via List(selection:)
+/// (which a collapsed NavigationSplitView needs to push the detail column),
+/// and a competing tap gesture there would swallow the row tap.
+private struct SelectOnTap: ViewModifier {
+    let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.onTapGesture(perform: action)
+        #else
+        content
+        #endif
+    }
+}
+
+/// Whether row/header action buttons show only on pointer hover (macOS) or
+/// always (iOS — nothing hovers on touch).
+@inline(__always) private func actionsVisible(hovered: Bool) -> Bool {
+    #if os(iOS)
+    true
+    #else
+    hovered
+    #endif
+}
+
 /// A small icon button that appears on row hover (borderless, so clicking it
 /// doesn't select the row).
 private struct HoverIconButton: View {
@@ -221,8 +261,8 @@ private struct HostHeader: View {
                     }
                 }
             }
-            .opacity(isHovered ? 1 : 0)
-            .allowsHitTesting(isHovered)
+            .opacity(actionsVisible(hovered: isHovered) ? 1 : 0)
+            .allowsHitTesting(actionsVisible(hovered: isHovered))
             // Leave room for the sidebar section's hover disclosure chevron.
             .padding(.trailing, 16)
             #if os(iOS)
@@ -336,7 +376,8 @@ private struct HostBody: View {
                 let windowSelection = WindowSelection(hostID: host.id, windowID: window.id)
                 WindowRow(host: host, window: window,
                           kill: { confirm = killWindowConfirm(session, window) })
-                    .onTapGesture { selection = windowSelection }
+                    .tag(windowSelection)   // iOS native selection (pushes detail on iPhone)
+                    .modifier(SelectOnTap { selection = windowSelection })
                     .contextMenu { windowMenu(session, window) }
                     .listRowBackground(rowBackground(selected: selection == windowSelection))
             }
@@ -361,14 +402,17 @@ private struct HostBody: View {
     }
 
     /// The selected window gets a soft accent pill from the theme; everything
-    /// else stays on the plain sidebar background.
+    /// else stays on the plain sidebar background. macOS only — iOS uses the
+    /// List's native selection highlight (which also drives navigation).
     @ViewBuilder private func rowBackground(selected: Bool) -> some View {
+        #if os(macOS)
         if selected {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(AppTheme.accent.opacity(0.15))
                 .padding(.horizontal, 3)
                 .padding(.vertical, 1)
         }
+        #endif
     }
 
     @ViewBuilder private func sessionMenu(_ session: TmuxSession) -> some View {
@@ -490,8 +534,8 @@ private struct SessionHeader: View {
                 HoverIconButton(systemName: "xmark",
                                 hint: "Kill session “\(session.name)”…", action: kill)
             }
-            .opacity(isHovered ? 1 : 0)
-            .allowsHitTesting(isHovered)
+            .opacity(actionsVisible(hovered: isHovered) ? 1 : 0)
+            .allowsHitTesting(actionsVisible(hovered: isHovered))
         }
         .padding(.top, 4)
         .padding(.bottom, 1)
