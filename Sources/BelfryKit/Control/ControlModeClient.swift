@@ -218,6 +218,15 @@ final class ControlModeClient {
         scheduleRefresh()
     }
 
+    /// Split the window's active pane (`horizontal` = side by side, else
+    /// stacked). tmux expands `#{pane_current_path}` against the target pane,
+    /// so the new pane starts in the same directory — matching the common
+    /// `bind % split-window -c "#{pane_current_path}"` convention.
+    @MainActor func splitWindow(id: String, horizontal: Bool) {
+        send("split-window \(horizontal ? "-h" : "-v") -c '#{pane_current_path}' -t \(id)")
+        scheduleRefresh()
+    }
+
     @MainActor func killWindow(id: String) {
         send("kill-window -t \(id)")
         scheduleRefresh()
@@ -339,7 +348,7 @@ final class ControlModeClient {
     /// user-visible sessions (the server wasn't running anything but our control
     /// session), create a default one so the host is immediately usable.
     @MainActor
-    private func ensureDefaultSessionIfEmpty(_ sessions: [(id: String, name: String, attached: Bool)]) {
+    private func ensureDefaultSessionIfEmpty(_ sessions: [(id: String, name: String, attached: Int)]) {
         guard ensureSessionOnConnect, !didEnsureSession else { return }
         didEnsureSession = true
         let hasUserSession = sessions.contains { !$0.name.hasPrefix(TmuxStore.internalSessionPrefix) }
@@ -354,13 +363,13 @@ final class ControlModeClient {
     /// client is attached — is never touched, even across machines. Our own session
     /// is excluded by name. Runs once per (re)connect.
     @MainActor
-    private func reapOrphanedControlSessions(_ sessions: [(id: String, name: String, attached: Bool)]) {
+    private func reapOrphanedControlSessions(_ sessions: [(id: String, name: String, attached: Int)]) {
         guard !didReap else { return }
         didReap = true
         let prefixes = [Self.controlSessionPrefix] + Self.legacyControlPrefixes
         for session in sessions
         where session.name != controlSessionName
-            && !session.attached
+            && session.attached == 0
             && prefixes.contains(where: { session.name.hasPrefix($0) }) {
             clog("reaping orphaned control session \(session.name) (\(session.id))")
             send("kill-session -t \(session.id)")
@@ -394,12 +403,13 @@ final class ControlModeClient {
         }
     }
 
-    private static func parseSession(_ line: String) -> (id: String, name: String, attached: Bool)? {
+    private static func parseSession(_ line: String) -> (id: String, name: String, attached: Int)? {
         // SESS <id> <attached> <windows> <name...>
+        // `session_attached` is a client COUNT, not a flag (2 clients → "2").
         let parts = line.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: false)
         guard parts.count >= 5 else { return nil }
         let id = String(parts[1])
-        let attached = parts[2] == "1"
+        let attached = Int(parts[2]) ?? 0
         let name = String(parts[4])
         return (id, name, attached)
     }

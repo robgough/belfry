@@ -36,6 +36,16 @@ final class SessionSurfaceStore {
         activatedSessionIDs.removeAll()
     }
 
+    /// Tear down one session's surface. Used when the surface's tmux client
+    /// can no longer be trusted to be showing this session (the user moved it
+    /// with the tmux session selector); the next visit re-attaches cleanly.
+    func deactivate(sessionID: String) {
+        guard let workspace = workspaces[sessionID] else { return }
+        workspace.stop()
+        workspaces[sessionID] = nil
+        activatedSessionIDs.removeAll { $0 == sessionID }
+    }
+
     /// Tear down surfaces whose session no longer exists in tmux.
     func prune(livingSessionIDs: Set<String>) {
         let dead = activatedSessionIDs.filter { !livingSessionIDs.contains($0) }

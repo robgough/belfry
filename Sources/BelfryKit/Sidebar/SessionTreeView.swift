@@ -29,20 +29,34 @@ private struct InlineLinkButton: View {
 /// section; sessions list their windows beneath. Window rows are the selectable
 /// leaves (tagged with their host + window id). Right-click rows for actions;
 /// text-entry actions raise a `SidebarPrompt`, destructive ones a `ConfirmAction`.
+/// Hovering a row reveals its key actions inline (new session / new window /
+/// split); everything stays reachable from the context menus too.
 struct SessionTreeView: View {
     let hosts: [HostModel]
     let model: AppModel
     @Binding var selection: WindowSelection?
     @Binding var prompt: SidebarPrompt?
     @Binding var confirm: ConfirmAction?
+    /// Hosts whose section the user has collapsed (default: all expanded).
+    @State private var collapsedHosts: Set<String> = []
+    /// The session that owned the last selected window, so a window killed out
+    /// from under the selection can hand it to the session's next active window.
+    @State private var lastSelectedSession: SessionRef?
+
+    private struct SessionRef: Equatable {
+        let hostID: String
+        let sessionID: String
+    }
 
     var body: some View {
-        List(selection: $selection) {
+        List {
             ForEach(hosts) { host in
-                Section {
-                    HostBody(host: host, model: model, prompt: $prompt, confirm: $confirm)
+                Section(isExpanded: expansionBinding(for: host)) {
+                    HostBody(host: host, model: model,
+                             selection: $selection, prompt: $prompt, confirm: $confirm)
                 } header: {
-                    HostHeader(host: host, model: model, prompt: $prompt, confirm: $confirm)
+                    HostHeader(host: host, model: model, isExpanded: expansionBinding(for: host),
+                               prompt: $prompt, confirm: $confirm)
                 }
             }
         }
@@ -50,24 +64,167 @@ struct SessionTreeView: View {
         .scrollContentBackground(.hidden)
         .background(AppTheme.sidebarBackground)
         .environment(\.defaultMinListRowHeight, 26)
+        // tmux is authoritative for the active window: switching windows with
+        // tmux keys (prefix-n, status-bar clicks) moves the active flag on the
+        // next store refresh, and the sidebar selection follows instead of
+        // going stale. User clicks are safe: a click changes `selection`, not
+        // `followTarget`, and the two converge once tmux confirms the switch.
+        .onChange(of: followTarget) { _, target in
+            guard let target, target != selection else { return }
+            selection = target
+        }
+        .onChange(of: selection, initial: true) { _, sel in
+            guard let sel,
+                  let host = hosts.first(where: { $0.id == sel.hostID }),
+                  let session = host.store.sessions.first(where: { $0.windows.contains { $0.id == sel.windowID } })
+            else { return }
+            lastSelectedSession = SessionRef(hostID: host.id, sessionID: session.id)
+        }
+        // The tmux session selector (prefix-s / choose-tree) moves the visible
+        // surface's *client* to another session, silently breaking the
+        // one-surface-per-session invariant. Attached-client counts expose it:
+        // the selected session drops one client while another gains one.
+        .onChange(of: attachSnapshot) { old, new in
+            resolveSurfaceDrift(old: old, new: new)
+        }
+    }
+
+    /// host id → (session id → attached client count), for drift detection.
+    private var attachSnapshot: [String: [String: Int]] {
+        Dictionary(uniqueKeysWithValues: hosts.map { host in
+            (host.id, Dictionary(uniqueKeysWithValues: host.store.sessions.map {
+                ($0.id, $0.attachedClients)
+            }))
+        })
+    }
+
+    /// If the selected session's surface client followed the tmux session
+    /// selector to another session, retire that surface (its client can't be
+    /// steered back — the next visit re-attaches cleanly) and move the sidebar
+    /// selection to where the user actually went.
+    private func resolveSurfaceDrift(old: [String: [String: Int]], new: [String: [String: Int]]) {
+        guard let sel = selection,
+              let host = hosts.first(where: { $0.id == sel.hostID }),
+              let oldCounts = old[host.id], let newCounts = new[host.id],
+              let session = host.store.sessions.first(where: { $0.windows.contains { $0.id == sel.windowID } }),
+              host.surfaceStore.workspace(for: session.id) != nil,
+              let before = oldCounts[session.id], let after = newCounts[session.id],
+              after == before - 1
+        else { return }
+        // Exactly one other session gained a client in the same refresh —
+        // anything else is ambiguous (external attaches/detaches), so leave it.
+        let gainers = newCounts.filter { id, count in
+            id != session.id && count == (oldCounts[id] ?? 0) + 1
+        }
+        guard gainers.count == 1, let gainedID = gainers.first?.key else { return }
+        host.surfaceStore.deactivate(sessionID: session.id)
+        if let target = host.store.sessions.first(where: { $0.id == gainedID }),
+           let active = target.windows.first(where: { $0.isActive }) {
+            selection = WindowSelection(hostID: host.id, windowID: active.id)
+        }
+    }
+
+    /// Where the selection *should* sit given current tmux state: the active
+    /// window of the selected window's session — or, if the selected window no
+    /// longer exists (killed), the active window of the session it belonged to.
+    /// Nil when there's nothing to correct toward.
+    private var followTarget: WindowSelection? {
+        guard let sel = selection, let host = hosts.first(where: { $0.id == sel.hostID }) else { return nil }
+        if let session = host.store.sessions.first(where: { $0.windows.contains { $0.id == sel.windowID } }) {
+            guard let active = session.windows.first(where: { $0.isActive }) else { return nil }
+            return WindowSelection(hostID: host.id, windowID: active.id)
+        }
+        if let last = lastSelectedSession, last.hostID == sel.hostID,
+           let session = host.store.sessions.first(where: { $0.id == last.sessionID }),
+           let active = session.windows.first(where: { $0.isActive }) {
+            return WindowSelection(hostID: host.id, windowID: active.id)
+        }
+        return nil
+    }
+
+    private func expansionBinding(for host: HostModel) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedHosts.contains(host.id) },
+            set: { expanded in
+                if expanded {
+                    collapsedHosts.remove(host.id)
+                } else {
+                    collapsedHosts.insert(host.id)
+                }
+            }
+        )
+    }
+}
+
+/// A small icon button that appears on row hover (borderless, so clicking it
+/// doesn't select the row).
+private struct HoverIconButton: View {
+    let systemName: String
+    let hint: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .hoverHint(hint)
     }
 }
 
 private struct HostHeader: View {
     let host: HostModel
     let model: AppModel
+    @Binding var isExpanded: Bool
     @Binding var prompt: SidebarPrompt?
     @Binding var confirm: ConfirmAction?
+    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 9) {
             HostIconChip(systemName: host.transport.isLocal ? "desktopcomputer" : "globe",
                          status: host.store.status)
-            Text(host.displayName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .textCase(nil)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(host.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .textCase(nil)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                }
+            }
             Spacer(minLength: 0)
+            HStack(spacing: 2) {
+                HoverIconButton(systemName: "plus",
+                                hint: "New session on \(host.displayName)") {
+                    prompt = .newSession(host: host)
+                }
+                if host.canDisconnect {
+                    switch host.store.status {
+                    case .connected, .connecting, .reconnecting:
+                        HoverIconButton(systemName: "power",
+                                        hint: "Disconnect (sessions keep running)") {
+                            host.disconnect()
+                        }
+                    case .disconnected, .offline:
+                        HoverIconButton(systemName: "power",
+                                        hint: "Connect to \(host.displayName)") {
+                            host.reconnect()
+                        }
+                    }
+                }
+            }
+            .opacity(isHovered ? 1 : 0)
+            .allowsHitTesting(isHovered)
+            // Leave room for the sidebar section's hover disclosure chevron.
+            .padding(.trailing, 16)
             #if os(iOS)
             // Section headers don't get long-press context menus on iOS, so the
             // host actions (Disconnect/Connect, Remove…) need a visible button.
@@ -80,8 +237,32 @@ private struct HostHeader: View {
             }
             #endif
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        // The machine line is the anchor of its group: a full-bleed band
+        // behind the header makes each host read as a distinct block, and the
+        // section's hover disclosure chevron lands on the band instead of
+        // floating beside it. Section headers float above the list (no
+        // listRowBackground), so the band over-extends well past the List's
+        // margins — including the extra trailing space the header loses to
+        // the hover chevron — and the sidebar edge clips it flush.
+        .background(AppTheme.sidebarPanel.padding(.horizontal, -48))
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        // The whole machine line toggles its sessions — quicker than hunting
+        // the little chevron. The hover buttons still win over the tap.
+        .onTapGesture { isExpanded.toggle() }
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .contextMenu { menu }
+    }
+
+    /// "2 sessions · 5 windows" while connected; hidden when empty or down
+    /// (the status row below the header explains those states).
+    private var subtitle: String? {
+        guard host.store.status.isLive, !host.store.sessions.isEmpty else { return nil }
+        let sessions = host.store.sessions.count
+        let windows = host.store.sessions.reduce(0) { $0 + $1.windows.count }
+        return "\(sessions) session\(sessions == 1 ? "" : "s") · \(windows) window\(windows == 1 ? "" : "s")"
     }
 
     @ViewBuilder private var menu: some View {
@@ -142,17 +323,22 @@ private struct HostHeader: View {
 private struct HostBody: View {
     let host: HostModel
     let model: AppModel
+    @Binding var selection: WindowSelection?
     @Binding var prompt: SidebarPrompt?
     @Binding var confirm: ConfirmAction?
 
     var body: some View {
         ForEach(host.store.sessions) { session in
-            SessionHeader(session: session)
+            SessionHeader(host: host, session: session,
+                          kill: { confirm = killSessionConfirm(session) })
                 .contextMenu { sessionMenu(session) }
             ForEach(session.windows) { window in
-                WindowRow(window: window)
-                    .tag(WindowSelection(hostID: host.id, windowID: window.id))
+                let windowSelection = WindowSelection(hostID: host.id, windowID: window.id)
+                WindowRow(host: host, window: window,
+                          kill: { confirm = killWindowConfirm(session, window) })
+                    .onTapGesture { selection = windowSelection }
                     .contextMenu { windowMenu(session, window) }
+                    .listRowBackground(rowBackground(selected: selection == windowSelection))
             }
         }
         if host.store.sessions.isEmpty {
@@ -160,55 +346,85 @@ private struct HostBody: View {
         }
     }
 
+    private func killSessionConfirm(_ session: TmuxSession) -> ConfirmAction {
+        ConfirmAction(
+            title: "Kill session “\(session.name)”?",
+            message: "Ends the session and all its windows on \(host.displayName).",
+            confirmLabel: "Kill") { host.client.killSession(id: session.id) }
+    }
+
+    private func killWindowConfirm(_ session: TmuxSession, _ window: TmuxWindow) -> ConfirmAction {
+        ConfirmAction(
+            title: "Kill window “\(window.name.isEmpty ? "window \(window.index)" : window.name)”?",
+            message: "Closes the window on \(host.displayName).",
+            confirmLabel: "Kill") { host.client.killWindow(id: window.id) }
+    }
+
+    /// The selected window gets a soft accent pill from the theme; everything
+    /// else stays on the plain sidebar background.
+    @ViewBuilder private func rowBackground(selected: Bool) -> some View {
+        if selected {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(AppTheme.accent.opacity(0.15))
+                .padding(.horizontal, 3)
+                .padding(.vertical, 1)
+        }
+    }
+
     @ViewBuilder private func sessionMenu(_ session: TmuxSession) -> some View {
         Button("New Window") { host.client.newWindow(inSession: session.id) }
         Button("Rename Session…") { prompt = .renameSession(host: host, session: session) }
         Divider()
-        Button("Kill Session", role: .destructive) {
-            confirm = ConfirmAction(
-                title: "Kill session “\(session.name)”?",
-                message: "Ends the session and all its windows on \(host.displayName).",
-                confirmLabel: "Kill") { host.client.killSession(id: session.id) }
-        }
+        Button("Kill Session", role: .destructive) { confirm = killSessionConfirm(session) }
     }
 
     @ViewBuilder private func windowMenu(_ session: TmuxSession, _ window: TmuxWindow) -> some View {
+        Button {
+            host.client.splitWindow(id: window.id, horizontal: true)
+        } label: {
+            Label("Split Left / Right", systemImage: "rectangle.split.2x1")
+        }
+        Button {
+            host.client.splitWindow(id: window.id, horizontal: false)
+        } label: {
+            Label("Split Top / Bottom", systemImage: "rectangle.split.1x2")
+        }
+        Divider()
         Button("Rename Window…") { prompt = .renameWindow(host: host, window: window) }
         Button("New Window") { host.client.newWindow(inSession: session.id) }
         Divider()
-        Button("Kill Window", role: .destructive) {
-            confirm = ConfirmAction(
-                title: "Kill window “\(window.name.isEmpty ? "window \(window.index)" : window.name)”?",
-                message: "Closes the window on \(host.displayName).",
-                confirmLabel: "Kill") { host.client.killWindow(id: window.id) }
+        Button("Kill Window", role: .destructive) { confirm = killWindowConfirm(session, window) }
+    }
+}
+
+/// Connection state → theme tint, shared by the host chip and the group rail
+/// so the machine and its sessions visibly belong together.
+extension ConnectionStatus {
+    var tint: Color {
+        switch self {
+        case .connected: return AppTheme.statusGood
+        case .connecting, .reconnecting, .disconnected: return AppTheme.statusWarn
+        case .offline: return Color.secondary
         }
     }
 }
 
 /// Host icon in a status-tinted chip — anchors each host group on the left and
-/// shows the connection state by colour (hover for the exact status). Replaces
-/// the old far-right status dot.
+/// shows the connection state by colour (hover for the exact status). Uses the
+/// terminal theme's own green/amber, matching the group rail below it.
 private struct HostIconChip: View {
     let systemName: String
     let status: ConnectionStatus
     var body: some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(tint.opacity(0.16))
-            .frame(width: 22, height: 22)
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(status.tint.opacity(0.16))
+            .frame(width: 18, height: 18)
             .overlay(
                 Image(systemName: systemName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(tint)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(status.tint)
             )
             .hoverHint(statusText)
-    }
-    private var tint: Color {
-        switch status {
-        case .connected: return .green
-        case .connecting, .reconnecting: return .orange
-        case .disconnected: return .orange
-        case .offline: return Color.secondary
-        }
     }
     private var statusText: String {
         switch status {
@@ -221,21 +437,6 @@ private struct HostIconChip: View {
     }
 }
 
-/// Session presence marker: solid when a client is attached, hollow when not.
-private struct AttachDot: View {
-    let isAttached: Bool
-    var body: some View {
-        Circle()
-            .fill(isAttached ? Color.green : Color.clear)
-            .overlay(
-                Circle().strokeBorder(
-                    isAttached ? Color.clear : Color.secondary.opacity(0.5),
-                    lineWidth: 1.2)
-            )
-            .frame(width: 7, height: 7)
-            .hoverHint(isAttached ? "Attached (a client is on this session)" : "Not attached")
-    }
-}
 
 
 private struct HostStatusRow: View {
@@ -270,50 +471,117 @@ private struct HostStatusRow: View {
 }
 
 private struct SessionHeader: View {
+    let host: HostModel
     let session: TmuxSession
+    let kill: () -> Void
+    @State private var isHovered = false
+
     var body: some View {
         HStack(spacing: 8) {
-            AttachDot(isAttached: session.isAttached)
             Text(session.name)
                 .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
             Spacer(minLength: 0)
+            HStack(spacing: 2) {
+                HoverIconButton(systemName: "plus.square.on.square",
+                                hint: "New window in “\(session.name)”") {
+                    host.client.newWindow(inSession: session.id)
+                }
+                HoverIconButton(systemName: "xmark",
+                                hint: "Kill session “\(session.name)”…", action: kill)
+            }
+            .opacity(isHovered ? 1 : 0)
+            .allowsHitTesting(isHovered)
         }
         .padding(.top, 4)
         .padding(.bottom, 1)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 }
 
 private struct WindowRow: View {
+    let host: HostModel
     let window: TmuxWindow
+    let kill: () -> Void
+    @State private var isHovered = false
+
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: window.isActive ? "terminal.fill" : "terminal")
-                .font(.system(size: 11))
-                .foregroundStyle(window.isActive ? Color.accentColor : .secondary)
-                .frame(width: 16)
+            WindowIndexChip(index: window.index, isActive: window.isActive)
             Text(window.name.isEmpty ? "window \(window.index)" : window.name)
                 .font(.system(size: 12, weight: window.isActive ? .medium : .regular))
                 .foregroundStyle(window.isActive ? .primary : .secondary)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            HStack(spacing: 5) {
-                if window.hasBell {
-                    Image(systemName: "bell.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.yellow)
-                        .hoverHint("Bell rang in this window")
-                }
-                if window.claudeState != .none {
-                    ClaudeBadge(state: window.claudeState)
-                } else if window.hasActivity {
-                    Circle().fill(Color.orange).frame(width: 5, height: 5)
-                        .hoverHint("Unseen activity")
-                }
+            // Hover swaps the status badges for the split actions (they share
+            // the trailing slot); badges come back when the pointer leaves.
+            ZStack(alignment: .trailing) {
+                badges
+                    .opacity(isHovered ? 0 : 1)
+                actions
+                    .opacity(isHovered ? 1 : 0)
+                    .allowsHitTesting(isHovered)
             }
         }
         .padding(.leading, 18)
         .padding(.vertical, 1)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+
+    private var badges: some View {
+        HStack(spacing: 5) {
+            if window.hasBell {
+                Image(systemName: "bell.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(AppTheme.statusWarn)
+                    .hoverHint("Bell rang in this window")
+            }
+            if window.claudeState != .none {
+                ClaudeBadge(state: window.claudeState)
+            } else if window.hasActivity {
+                Circle().fill(AppTheme.statusWarn).frame(width: 5, height: 5)
+                    .hoverHint("Unseen activity")
+            }
+        }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 2) {
+            HoverIconButton(systemName: "rectangle.split.2x1",
+                            hint: "Split left / right") {
+                host.client.splitWindow(id: window.id, horizontal: true)
+            }
+            HoverIconButton(systemName: "rectangle.split.1x2",
+                            hint: "Split top / bottom") {
+                host.client.splitWindow(id: window.id, horizontal: false)
+            }
+            HoverIconButton(systemName: "xmark",
+                            hint: "Kill this window…", action: kill)
+        }
+    }
+}
+
+/// The tmux window index in a small chip — active window gets an accent-tinted
+/// fill (same treatment as the host chip and Claude badges), inactive ones a
+/// plain secondary numeral. Doubles as the "which window is prefix-N" hint.
+private struct WindowIndexChip: View {
+    let index: Int
+    let isActive: Bool
+
+    var body: some View {
+        Text("\(index)")
+            .font(.system(size: 10, weight: isActive ? .bold : .regular).monospacedDigit())
+            .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+            .frame(width: 16, height: 15)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(isActive ? Color.accentColor.opacity(0.16) : Color.clear)
+            )
+            .hoverHint(isActive ? "Active window (index \(index))" : "Window index \(index)")
     }
 }
 

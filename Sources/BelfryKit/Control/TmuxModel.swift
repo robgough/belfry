@@ -78,8 +78,13 @@ struct TmuxWindow: Identifiable, Hashable {
 struct TmuxSession: Identifiable, Hashable {
     let id: String
     var name: String
-    var isAttached: Bool
+    /// tmux's `session_attached` — the number of clients attached (Belfry's
+    /// own warm surface counts as one; counts also drive drift detection when
+    /// a surface's client follows the tmux session selector elsewhere).
+    var attachedClients: Int
     var windows: [TmuxWindow]
+
+    var isAttached: Bool { attachedClients > 0 }
 }
 
 /// Observable store of the tmux session/window tree, fed by `ControlModeClient`.
@@ -93,15 +98,15 @@ final class TmuxStore {
     private(set) var sessions: [TmuxSession] = []
     var status: ConnectionStatus = .connecting
 
-    /// session id -> (name, attached)
-    private var rawSessions: [String: (name: String, attached: Bool)] = [:]
+    /// session id -> (name, attached client count)
+    private var rawSessions: [String: (name: String, attached: Int)] = [:]
     /// session id -> its windows
     private var rawWindows: [String: [TmuxWindow]] = [:]
     private var rebuildScheduled = false
 
     static let internalSessionPrefix = "__belfry"
 
-    func applySessionList(_ list: [(id: String, name: String, attached: Bool)]) {
+    func applySessionList(_ list: [(id: String, name: String, attached: Int)]) {
         rawSessions = Dictionary(uniqueKeysWithValues: list.map { ($0.id, ($0.name, $0.attached)) })
         // Drop windows whose session no longer exists.
         rawWindows = rawWindows.filter { rawSessions[$0.key] != nil }
@@ -147,7 +152,7 @@ final class TmuxStore {
         for (id, info) in rawSessions {
             guard !info.name.hasPrefix(Self.internalSessionPrefix) else { continue }
             let windows = (rawWindows[id] ?? []).sorted { $0.index < $1.index }
-            built.append(TmuxSession(id: id, name: info.name, isAttached: info.attached, windows: windows))
+            built.append(TmuxSession(id: id, name: info.name, attachedClients: info.attached, windows: windows))
         }
         built.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         // Only publish when something actually changed — a no-op assignment still

@@ -17,6 +17,18 @@ enum AppTheme {
     }
     static var accent: Color { color(resolved.palette[safe: 4] ?? resolved.foreground) }
 
+    /// Status colours from the terminal palette (ANSI green/yellow), so every
+    /// "connected"/"attention" indicator in the chrome shares one green and one
+    /// amber with the terminals instead of mixing system colours.
+    static var statusGood: Color { color(resolved.palette[safe: 2] ?? 0x40A02B) }
+    static var statusWarn: Color { color(resolved.palette[safe: 3] ?? 0xDF8E1D) }
+
+    /// Faint panel behind each host's sessions/windows, so a machine's group
+    /// reads as one block against the sidebar background.
+    static var sidebarPanel: Color {
+        color(shade(resolved.background, by: resolved.isDark ? -0.18 : -0.025))
+    }
+
     private static func color(_ hex: UInt32, opacity: Double = 1) -> Color {
         Color(.sRGB,
               red: Double((hex >> 16) & 0xFF) / 255,
