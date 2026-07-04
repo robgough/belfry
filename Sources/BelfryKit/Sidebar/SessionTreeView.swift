@@ -87,6 +87,7 @@ struct SessionTreeView: View {
     @ViewBuilder private var platformList: some View {
         #if os(iOS)
         List(selection: $selection) { treeSections }
+            .listSectionSpacing(.compact)
         #else
         List { treeSections }
         #endif
@@ -168,6 +169,21 @@ struct SessionTreeView: View {
                 }
             }
         )
+    }
+}
+
+/// iOS row chrome: kill the grouped-list separators and the tall default row
+/// metrics so the tree reads as one dense sidebar (like the Mac) instead of a
+/// stack of boxed table cells. macOS's AppKit sidebar style needs none of it.
+private struct SidebarRowChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 3, leading: 16, bottom: 3, trailing: 12))
+        #else
+        content
+        #endif
     }
 }
 
@@ -372,6 +388,8 @@ private struct HostBody: View {
             SessionHeader(host: host, session: session,
                           kill: { confirm = killSessionConfirm(session) })
                 .contextMenu { sessionMenu(session) }
+                .listRowBackground(rowBackground(selected: false))
+                .modifier(SidebarRowChrome())
             ForEach(session.windows) { window in
                 let windowSelection = WindowSelection(hostID: host.id, windowID: window.id)
                 WindowRow(host: host, window: window,
@@ -380,10 +398,13 @@ private struct HostBody: View {
                     .modifier(SelectOnTap { selection = windowSelection })
                     .contextMenu { windowMenu(session, window) }
                     .listRowBackground(rowBackground(selected: selection == windowSelection))
+                    .modifier(SidebarRowChrome())
             }
         }
         if host.store.sessions.isEmpty {
             HostStatusRow(host: host)
+                .listRowBackground(rowBackground(selected: false))
+                .modifier(SidebarRowChrome())
         }
     }
 
@@ -401,18 +422,23 @@ private struct HostBody: View {
             confirmLabel: "Kill") { host.client.killWindow(id: window.id) }
     }
 
-    /// The selected window gets a soft accent pill from the theme; everything
-    /// else stays on the plain sidebar background. macOS only — iOS uses the
-    /// List's native selection highlight (which also drives navigation).
+    /// The selected window gets a soft theme-accent pill on both platforms;
+    /// unselected rows are transparent. On iOS the clear background must be
+    /// EXPLICIT — the grouped-list default otherwise paints every row as a
+    /// dark rounded card over our themed sidebar background. Replacing the
+    /// background changes only the visuals, not List-selection mechanics, so
+    /// iPhone detail navigation keeps working.
     @ViewBuilder private func rowBackground(selected: Bool) -> some View {
-        #if os(macOS)
         if selected {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(AppTheme.accent.opacity(0.15))
                 .padding(.horizontal, 3)
                 .padding(.vertical, 1)
+        } else {
+            #if os(iOS)
+            Color.clear
+            #endif
         }
-        #endif
     }
 
     @ViewBuilder private func sessionMenu(_ session: TmuxSession) -> some View {
