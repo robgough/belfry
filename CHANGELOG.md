@@ -2,6 +2,46 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.5] — 2026-07-04
+
+### Added
+
+- **Sidebar actions on hover** (macOS): hosts get new-session and
+  connect/disconnect buttons, sessions get new-window and kill, and windows
+  get split left/right, split top/bottom (both open in the pane's current
+  directory) and kill — kills always confirm first. Everything is mirrored in
+  the right-click menus, where the splits are new too.
+- **Collapsible machine groups**: each host is a full-width header band with
+  a live session/window count — click anywhere on the band to collapse or
+  expand that machine's sessions.
+
+### Fixed
+
+- **Scrolling was far too fast** (macOS): trackpad deltas were fed to the
+  terminal engine as whole wheel ticks — one line per pixel of finger travel,
+  roughly 30× too fast (and holding ⇧ while scrolling randomly changed the
+  speed). Trackpad scrolling is now pixel-accurate with proper inertial
+  decay, matching Ghostty; physical mouse wheels still scroll by lines.
+- **Sidebar selection follows tmux**: switching windows with tmux keys
+  (prefix-n, status-bar clicks) now moves the sidebar highlight along with
+  the active-window indicator, instead of leaving it stale — including when
+  the selected window is killed.
+- **The tmux session selector no longer confuses the app**: choosing another
+  session with prefix-s inside a terminal used to leave the surface showing
+  one session while the sidebar pointed at another. Belfry now detects the
+  move and follows you to the session you picked.
+- Sessions with two or more attached clients were shown as detached (tmux
+  reports a client *count*, which was read as a yes/no flag).
+
+### Changed
+
+- **Sidebar polish**: window rows show the tmux window index in a small chip
+  (the active window's chip is accent-tinted), the selection highlight is a
+  soft theme-matched pill instead of the loud system one, and every status
+  colour in the chrome now comes from the terminal theme's own palette — one
+  green and one amber everywhere. The per-session attach dot is gone (it
+  reflected Belfry's internal state, not anything actionable).
+
 ## [2026.07.4] — 2026-07-04
 
 ### Fixed
