@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- OpenGraph card generator: render at exactly 1200x630 (DPR 1) and
+     screenshot to images/og.png. The screenshot it embeds is the same
+     images/macos.png the landing page uses. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #181926; --panel: #1e2030; --text: #cad3f5; --muted: #8b92b8;
+    --green: #a6da95; --orange: #f5a97f; --yellow: #eed49f;
+    --blue: #8aadf4; --lavender: #b7bdf8; --crust: #11111b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px; height: 630px; overflow: hidden; position: relative;
+    background: radial-gradient(120% 140% at 20% 0%, #1f2233 0%, var(--bg) 55%, #14151f 100%);
+    font-family: "SF Pro Display", -apple-system, "Helvetica Neue", sans-serif;
+    color: var(--text);
+  }
+  .banner {
+    position: absolute; top: 56px; left: 72px;
+    font: 700 26px/1.05 "SF Mono", ui-monospace, Menlo, monospace;
+    white-space: pre;
+    background: linear-gradient(100deg, var(--blue) 0%, var(--lavender) 60%, var(--yellow) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .tagline {
+    position: absolute; top: 300px; left: 72px; width: 500px;
+    font-size: 44px; font-weight: 800; line-height: 1.16; letter-spacing: -0.5px;
+    color: #dee4ff;
+  }
+  .tagline .tmux { color: var(--orange); }
+  .sub {
+    position: absolute; top: 442px; left: 72px; width: 470px;
+    font-size: 23px; line-height: 1.4; color: var(--muted); font-weight: 500;
+  }
+  .shot {
+    position: absolute; top: 96px; left: 618px; width: 1010px;
+    border-radius: 12px; border: 1px solid #3a3f58;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.55);
+    overflow: hidden;
+  }
+  .shot img { display: block; width: 100%; }
+  .statusbar {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 54px;
+    background: var(--crust); display: flex; align-items: center;
+    font: 600 21px "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  .statusbar .name {
+    background: var(--green); color: var(--crust);
+    padding: 0 18px; height: 100%; display: flex; align-items: center;
+  }
+  .statusbar .win { padding: 0 14px; color: var(--muted); }
+  .statusbar .win.active { background: #2a2d40; color: var(--text); }
+  .statusbar .win.active .star { color: var(--orange); }
+  .statusbar .url { margin-left: auto; padding: 0 20px; color: var(--yellow); }
+</style>
+</head>
+<body>
+  <pre class="banner">
+ _          _  __
+| |__   ___| |/ _|_ __ _   _
+| '_ \ / _ \ | |_| '__| | | |
+| |_) |  __/ |  _| |  | |_| |
+|_.__/ \___|_|_| |_|   \__, |
+                       |___/ </pre>
+
+  <div class="tagline">A native macOS&nbsp;+ iPadOS front-end for <span class="tmux">real tmux.</span></div>
+  <div class="sub">Click between machines, sessions and windows — with live Claude Code status badges.</div>
+
+  <div class="shot"><img src="images/macos.png" alt=""></div>
+
+  <nav class="statusbar">
+    <span class="name">[belfry]</span>
+    <span class="win active">1:mac<span class="star">*</span></span>
+    <span class="win">2:ipad</span>
+    <span class="win">3:ssh</span>
+    <span class="url">belfry.robgough.net</span>
+  </nav>
+</body>
+</html>
