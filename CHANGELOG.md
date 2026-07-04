@@ -2,6 +2,18 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.8] — 2026-07-04
+
+iPadOS/iOS-only TestFlight release:
+
+### Fixed
+
+- **The sidebar tree looks like a sidebar again on iOS**: session headers no
+  longer render as dark rounded cards, the separators between windows are
+  gone, and row spacing is compact — one dense host → session → window tree,
+  matching the Mac. The selected window gets the same soft theme-accent
+  highlight as macOS.
+
 ## [2026.07.7] — 2026-07-04
 
 iPadOS/iOS-only TestFlight release fixing two regressions the sidebar rework
