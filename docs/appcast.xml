@@ -3,6 +3,16 @@
     <channel>
         <title>Belfry</title>
         <item>
+            <title>2026.07.4</title>
+            <pubDate>Sat, 04 Jul 2026 03:04:10 +0100</pubDate>
+            <link>https://belfry.robgough.net</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/robgough/belfry/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>35</sparkle:version>
+            <sparkle:shortVersionString>2026.07.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/robgough/belfry/releases/download/v2026.07.4/Belfry-2026.07.4.zip" length="15986233" type="application/octet-stream" sparkle:edSignature="jnLqDsIWfjJ/VrgqfKxw7kfNNYGrM5sVEf6Ds7UhMJPOaWlQNbDG+x7j1jF075geGp3tyJal3c3BC+QAYx/QCw=="/>
+        </item>
+        <item>
             <title>2026.07.2</title>
             <pubDate>Fri, 03 Jul 2026 05:04:57 +0100</pubDate>
             <link>https://belfry.robgough.net</link>
@@ -21,16 +31,6 @@
             <sparkle:shortVersionString>0.3.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/robgough/belfry/releases/download/v0.3.1/Belfry-0.3.1.zip" length="15873277" type="application/octet-stream" sparkle:edSignature="XhhSrk1LrGOFO3Vfs75U/jAze98uImORpCDnZcF0dg92td8qMJvbGxhuQNBOx5ahuyFnxAu24s2k+YYNN2aGDQ=="/>
-        </item>
-        <item>
-            <title>0.3.0</title>
-            <pubDate>Fri, 03 Jul 2026 00:35:13 +0100</pubDate>
-            <link>https://belfry.robgough.net</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/robgough/belfry/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>21</sparkle:version>
-            <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/robgough/belfry/releases/download/v0.3.0/Belfry-0.3.0.zip" length="15873534" type="application/octet-stream" sparkle:edSignature="sGOKkRjecYfFpkQICahxOynmiIWjEH4XheqfYtjum3toRZbY0CZCtmH0rqK31nndDod/KxpCdy2dqheaRl4dAw=="/>
         </item>
     </channel>
 </rss>
