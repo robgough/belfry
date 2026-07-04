@@ -125,7 +125,8 @@
   h2 .idx { color: var(--overlay); font-weight: 400; }
 
   /* screenshots */
-  .shots { display: grid; grid-template-columns: 3fr 2fr; gap: 1.25rem; align-items: start; }
+  /* Single column while the iPad shot is being redone; was `3fr 2fr`. */
+  .shots { display: grid; grid-template-columns: 1fr; gap: 1.25rem; align-items: start; }
   @media (max-width: 720px) { .shots { grid-template-columns: 1fr; } }
   figure { min-width: 0; }
   .shots img {
@@ -266,10 +267,12 @@
         <img src="images/macos.png" alt="Belfry on macOS: two machines in the sidebar — Local and an SSH host — with sessions and windows beneath, Working and Waiting badges on claude windows, and a live split terminal showing nvim beside a passing test run" width="1600" height="944">
         <figcaption>macOS — libghostty surfaces, your Ghostty theme picked up automatically</figcaption>
       </figure>
-      <figure>
-        <img src="images/ipad.png" alt="Belfry on iPad: a full-screen tmux session over SSH with a key bar of esc, ctrl, arrows and function keys" width="1032" height="1376">
-        <figcaption>iPadOS — SwiftTerm over in-process SSH, key bar included</figcaption>
-      </figure>
+      <!-- iPad figure temporarily removed pending a re-shot with staged demo
+           data (the old capture showed a real hostname). Restore as:
+           <figure>
+             <img src="images/ipad.png" alt="…" width="…" height="…">
+             <figcaption>iPadOS — SwiftTerm over in-process SSH, key bar included</figcaption>
+           </figure> -->
     </div>
   </section>
 

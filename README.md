@@ -4,9 +4,7 @@ A native macOS + iPadOS front-end for **real tmux**: a sidebar of hosts → sess
 
 Your sessions live in tmux, exactly as they always have. Belfry attaches; it never owns them. Quit the app, kill the network, switch devices — everything keeps running.
 
-| macOS | iPadOS |
-| --- | --- |
-| ![Belfry on macOS](docs/images/macos.png) | ![Belfry on iPad](docs/images/ipad.png) |
+![Belfry on macOS](docs/images/macos.png)
 
 ## Features
 
