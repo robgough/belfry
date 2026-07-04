@@ -2,6 +2,28 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.4] — 2026-07-04
+
+### Fixed
+
+- **Permanent beachball (force-quit required) when terminal output flooded
+  the app** (macOS): splitting a tmux pane on a fast connection — the local
+  host especially — could freeze Belfry for good. Terminal output was handed
+  to the embedded terminal engine on the main thread, and one large redraw
+  burst carrying many host notifications (tmux with `mouse on` toggles mouse
+  modes around every redraw; title/colour changes count too) overflowed the
+  engine's 64-slot notification mailbox. That mailbox is only drained on the
+  main thread, which was the thread stuck waiting for space: a self-deadlock.
+  Output is now fed to the engine from a background queue (its intended
+  threading model), so a full mailbox simply waits out the next engine tick.
+  The same fix is in the iOS terminal view and ships with the next iOS build.
+
+## [2026.07.3] — 2026-07-03
+
+iPadOS/iOS-only TestFlight release: the on-screen keyboard stays hidden
+until explicitly summoned, instead of popping up whenever a session is
+selected.
+
 ## [2026.07.2] — 2026-07-03
 
 macOS release carrying the changes listed under 2026.07.1: sending files to
