@@ -42,6 +42,11 @@ These live in the login keychain and only need doing again on a new machine:
   (`.build/sparkle-tools/bin/generate_keys`); the matching public key is
   hard-coded as `SUPublicEDKey` in `scripts/make_app.sh`. Losing this key
   means shipped apps reject future updates — keep it backed up.
+- **Homebrew tap clone** — the cask lives in a separate repo,
+  [robgough/homebrew-belfry](https://github.com/robgough/homebrew-belfry)
+  (`Casks/belfry.rb`). `scripts/update_cask.sh` clones it to `../homebrew-belfry`
+  on first run (override with `BELFRY_TAP`); it only needs push access to that
+  repo. Nothing to set up beyond a working `git`/GitHub auth.
 
 ## Cutting a release
 
@@ -78,13 +83,28 @@ These live in the login keychain and only need doing again on a new machine:
    published by GitHub Pages, so it goes live on push (~a minute for the
    Pages build).
 
-5. **Verify.** Download the asset fresh and check Gatekeeper + the feed:
+5. **Bump the Homebrew cask** (after the release asset exists, since the cask
+   URL points at it):
+
+   ```sh
+   ./scripts/update_cask.sh   # defaults to the newest Belfry-*.zip you built
+   ```
+
+   This rewrites `version` + `sha256` in the [tap](https://github.com/robgough/homebrew-belfry)'s
+   `Casks/belfry.rb` and pushes it, so `brew install --cask robgough/belfry`
+   (and `brew upgrade`) pick up the new build. It's a no-op if the cask is
+   already current, and needs a clone of the tap (it clones to
+   `../homebrew-belfry`, or set `BELFRY_TAP`). Only macOS releases touch the
+   cask — skip it for iOS-only releases.
+
+6. **Verify.** Download the asset fresh and check Gatekeeper + the feed:
 
    ```sh
    curl -sLO https://github.com/robgough/belfry/releases/latest/download/Belfry-X.Y.Z.zip
    ditto -x -k Belfry-X.Y.Z.zip /tmp/belfry-verify
    spctl --assess --type execute -vv /tmp/belfry-verify/Belfry.app   # accepted, Notarized Developer ID
    curl -s https://belfry.robgough.net/appcast.xml | grep shortVersionString
+   brew livecheck --cask robgough/belfry/belfry   # should report the new version
    ```
 
    Belt-and-braces: launch the new app and hit "Check for Updates…" — it

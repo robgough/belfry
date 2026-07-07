@@ -112,6 +112,15 @@
     font-weight: 600;
   }
   .btn.primary:hover { background: var(--peach); border-color: var(--peach); }
+  .install {
+    font-family: var(--mono); font-size: 0.85rem;
+    color: var(--overlay); margin-top: 1.1rem;
+  }
+  .install code {
+    color: var(--peach); background: var(--mantle);
+    border: 1px solid var(--surface); border-radius: 5px;
+    padding: 0.28rem 0.55rem;
+  }
 
   /* ---- sections ------------------------------------------------------ */
   section { padding: 3.5rem 0 0.5rem; }
@@ -255,6 +264,7 @@
       <a class="btn primary" href="https://github.com/robgough/belfry/releases/latest">Download for macOS</a>
       <a class="btn" href="https://github.com/robgough/belfry">View on GitHub</a>
     </div>
+    <p class="install">or <code>brew tap robgough/belfry &amp;&amp; brew install --cask belfry</code></p>
   </div>
 </header>
 
@@ -320,7 +330,7 @@
 
   <section id="build">
     <h2><span class="idx">4:</span>build</h2>
-    <p class="note lead">No toolchain needed on the Mac: <a href="https://github.com/robgough/belfry/releases/latest">download the notarized app</a> (universal, macOS 14+), unzip, drag to Applications. Or build from source:</p>
+    <p class="note lead">No toolchain needed on the Mac: <code>brew tap robgough/belfry &amp;&amp; brew install --cask belfry</code>, or <a href="https://github.com/robgough/belfry/releases/latest">download the notarized app</a> (universal, macOS 14+), unzip, drag to Applications. Or build from source:</p>
     <div class="build-grid">
       <div class="card">
         <h3>macOS <span>14+</span></h3>

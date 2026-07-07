@@ -18,9 +18,21 @@ Your sessions live in tmux, exactly as they always have. Belfry attaches; it nev
 
 ## Installing
 
-Prefer a download? A notarized, universal `Belfry.app` (macOS 14+) is on the
-[releases page](https://github.com/robgough/belfry/releases/latest) — unzip and
-drag to Applications. Changes per release are in [CHANGELOG.md](CHANGELOG.md).
+Install with [Homebrew](https://brew.sh):
+
+```sh
+brew tap robgough/belfry
+brew install --cask belfry
+```
+
+(If you run Homebrew with `HOMEBREW_REQUIRE_TAP_TRUST` set, run
+`brew trust robgough/belfry` after tapping — it refuses untrusted third-party
+taps until then.)
+
+Prefer a direct download? A notarized, universal `Belfry.app` (macOS 14+) is on
+the [releases page](https://github.com/robgough/belfry/releases/latest) — unzip
+and drag to Applications. Either way the app keeps itself current via Sparkle;
+changes per release are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Building
 
