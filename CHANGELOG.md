@@ -2,6 +2,22 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.11] — 2026-07-08
+
+macOS release.
+
+### Fixed
+
+- **New local sessions and windows opened in `/` instead of your home
+  directory.** The local tmux server is started by a launchd agent, and
+  launchd GUI jobs default their working directory to `/`; the agent plist
+  didn't override it, so every detached `new-session`/`new-window` that didn't
+  carry its own start directory inherited `/`. The plist now sets
+  `WorkingDirectory` to `$HOME`, and the new-session/new-window commands pass an
+  explicit `-c` (home for a fresh session, the active pane's path for a new
+  window) so they land in the right place even against an already-running
+  server.
+
 ## [2026.07.10] — 2026-07-08
 
 macOS release.

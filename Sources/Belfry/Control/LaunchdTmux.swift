@@ -82,6 +82,10 @@ enum LaunchdTmux {
             "ProgramArguments": [
                 Tmux.executablePath, "new-session", "-A", "-d", "-s", controlSessionName,
             ],
+            // launchd GUI jobs default their cwd to "/"; without this the tmux server
+            // (and every session/window that doesn't pass its own -c) would start in "/"
+            // instead of the user's home. Mirrors the non-launchd path in TmuxTransport.
+            "WorkingDirectory": NSHomeDirectory(),
             "RunAtLoad": true,
             "EnvironmentVariables": env,
         ]

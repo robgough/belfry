@@ -241,12 +241,17 @@ final class ControlModeClient {
 
     @MainActor func newSession(name: String) {
         // Detached create so it doesn't disturb the control client's own session.
-        send("new-session -d -s \(Self.quote(name))")
+        // Pin the start directory to home: a detached new-session has no client/pane
+        // to derive a cwd from, so without -c it inherits the server's cwd (which is
+        // "/" for an already-running launchd server).
+        send("new-session -d -c \(Self.quote(NSHomeDirectory())) -s \(Self.quote(name))")
         scheduleRefresh()
     }
 
     @MainActor func newWindow(inSession sessionID: String) {
-        send("new-window -t \(sessionID)")
+        // Start in the session's active pane directory, matching splitWindow, rather
+        // than falling back to the server cwd.
+        send("new-window -c '#{pane_current_path}' -t \(sessionID)")
         scheduleRefresh()
     }
 
