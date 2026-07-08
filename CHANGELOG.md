@@ -2,6 +2,29 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.10] — 2026-07-08
+
+macOS release.
+
+### Added
+
+- **Install with Homebrew**: `brew tap robgough/belfry && brew install --cask
+  belfry` — a notarized, universal cask. Sparkle auto-updates keep working
+  alongside `brew upgrade`.
+
+### Fixed
+
+- **Local sessions could hang on "Connecting…" when tmux came from somewhere
+  other than Homebrew.** The local control client hard-coded
+  `/opt/homebrew/bin/tmux`; if the running tmux server was a different build
+  (e.g. a Nix or MacPorts tmux), control mode attached but never completed its
+  handshake — an endless spinner. Belfry now drives the local server with *its
+  own* binary, the one that started it, so client and server always match.
+- **A stalled connect surfaces a reason instead of spinning forever**: if the
+  first session list doesn't arrive within a few seconds, the host reports that
+  control mode didn't respond — and that Belfry's tmux may be a different build
+  than the one running your sessions — rather than an endless "Connecting…".
+
 ## [2026.07.9] — 2026-07-04
 
 iPadOS/iOS-only TestFlight release:
