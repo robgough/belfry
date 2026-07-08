@@ -47,6 +47,9 @@ final class ControlModeClient {
 
     private var refreshTimer: Timer?
     private var refreshDebounce: DispatchWorkItem?
+    /// Fires if a fresh connect never delivers its first session list in time, so
+    /// a stalled control stream surfaces a reason instead of spinning forever.
+    private var connectWatchdog: Timer?
     private var isStarted = false
     /// Set once the server delivers a `%subscription-changed` (proving it
     /// supports `refresh-client -B` push updates); the poll then drops from
@@ -103,6 +106,11 @@ final class ControlModeClient {
     /// the slow backstop once `%subscription-changed` notifications flow.
     private static let fastRefreshInterval: TimeInterval = 2.0
     private static let backstopRefreshInterval: TimeInterval = 30.0
+    /// A healthy connect delivers its first session list well under a second; if
+    /// none arrives this long after we start, treat control mode as stalled (e.g.
+    /// the tmux driving it is a different build than the server it attached to) and
+    /// fail with a diagnostic rather than an endless "Connecting…".
+    private static let connectTimeout: TimeInterval = 12.0
 
     /// Format for the server-side tree subscription: every session (`#{S:}` loop)
     /// with its windows nested (`#{W:}` loop), covering everything the sidebar
@@ -140,7 +148,34 @@ final class ControlModeClient {
         didReap = false
         lastDiagnostic = nil
         stopRequested = false
+        armConnectWatchdog()
         channel.start()
+    }
+
+    /// (Re)arm the connect watchdog. Cancelled the moment the first session list
+    /// arrives (`processBlock`), and on stop/exit.
+    @MainActor
+    private func armConnectWatchdog() {
+        connectWatchdog?.invalidate()
+        let timer = Timer(timeInterval: Self.connectTimeout, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.connectTimedOut() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        connectWatchdog = timer
+    }
+
+    @MainActor
+    private func connectTimedOut() {
+        connectWatchdog = nil
+        guard !stopRequested, !store.status.isLive else { return }
+        clog("no session list within \(Int(Self.connectTimeout))s — control mode stalled")
+        if lastDiagnostic == nil {
+            lastDiagnostic = "tmux control mode didn't respond — Belfry's tmux may be a "
+                + "different build than the tmux running your sessions"
+        }
+        // Tear the half-open channel down; the normal exit path surfaces the reason
+        // and lets the owner back off / stop looping.
+        channel.stop()
     }
 
     /// The channel is up (PTY spawned / SSH exec running): send the initial
@@ -179,6 +214,8 @@ final class ControlModeClient {
         stopRequested = true
         refreshTimer?.invalidate()
         refreshTimer = nil
+        connectWatchdog?.invalidate()
+        connectWatchdog = nil
         isStarted = false
         channel.stop()
     }
@@ -332,6 +369,8 @@ final class ControlModeClient {
             let sessions = lines.compactMap { $0.hasPrefix("SESS ") ? Self.parseSession($0) : nil }
             reapOrphanedControlSessions(sessions)
             store.applySessionList(sessions)
+            connectWatchdog?.invalidate()
+            connectWatchdog = nil
             let wasLive = store.status.isLive
             store.setStatus(.connected)
             if !wasLive { onConnected?() }
@@ -438,6 +477,8 @@ final class ControlModeClient {
         }
         refreshTimer?.invalidate()
         refreshTimer = nil
+        connectWatchdog?.invalidate()
+        connectWatchdog = nil
         isStarted = false
         onExitHandler?(lastDiagnostic)
     }
