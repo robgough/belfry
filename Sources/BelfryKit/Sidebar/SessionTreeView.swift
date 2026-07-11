@@ -615,7 +615,6 @@ private struct PinnedSectionHeader: View {
 private struct PinnedRow: View {
     let resolved: ResolvedPin
     let unpin: () -> Void
-    @State private var isHovered = false
     @State private var pinHovered = false
 
     var body: some View {
@@ -658,24 +657,16 @@ private struct PinnedRow: View {
                 }
             }
             Spacer(minLength: 0)
-            // Same trailing-slot swap as WindowRow: badges give way to the
-            // unpin button on hover (iOS unpins via the context menu).
-            ZStack(alignment: .trailing) {
-                if let window = resolved.window {
-                    WindowBadges(window: window)
-                        .opacity(isHovered ? 0 : 1)
-                }
-                HoverIconButton(systemName: "pin.slash",
-                                hint: "Unpin “\(title)”", action: unpin)
-                    .opacity(isHovered ? 1 : 0)
-                    .allowsHitTesting(isHovered)
+            // The leading pin glyph is the unpin control, so the trailing
+            // slot keeps the status badges full-time.
+            if let window = resolved.window {
+                WindowBadges(window: window)
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .opacity(resolved.isLive ? 1 : 0.55)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: pinHovered)
     }
 
     private var title: String {
