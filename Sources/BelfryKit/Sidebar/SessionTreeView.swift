@@ -701,7 +701,7 @@ private struct PinnedRow: View {
     /// stale note explains the row instead.
     private var pathLine: String? {
         guard staleNote == nil, let path = currentPath else { return nil }
-        return abbreviatePath(path)
+        return abbreviateHomePath(path)
     }
 
     /// The Claude Code session name running in the pinned window (session pins
@@ -732,18 +732,6 @@ private struct PinnedRow: View {
     /// The context window's working directory ("" from tmux means unknown).
     private var currentPath: String? {
         guard let path = contextWindow?.currentPath, !path.isEmpty else { return nil }
-        return path
-    }
-
-    /// Collapse the common macOS/Linux home prefixes to "~" — we can't know a
-    /// remote host's real home, but keeping the interesting tail of the path
-    /// visible matters more than prefix fidelity in a 250pt sidebar.
-    private func abbreviatePath(_ path: String) -> String {
-        for prefix in ["/Users/", "/home/"] where path.hasPrefix(prefix) {
-            let rest = path.dropFirst(prefix.count)
-            guard let slash = rest.firstIndex(of: "/") else { return "~" }
-            return "~" + rest[slash...]
-        }
         return path
     }
 }
@@ -971,7 +959,11 @@ private struct WindowIndexChip: View {
 /// `.idle` is a calm green check — the turn is over, nothing pending; `.waiting` is an
 /// amber question mark — Claude is actively waiting for your input (e.g. a permission
 /// prompt), the only state that pulses and badges the Dock.
-private struct ClaudeBadge: View {
+///
+/// Internal (not file-private): the toolbar's now-playing readout
+/// (`NowPlayingView`) reuses the same chip so Claude status looks identical
+/// everywhere in the chrome.
+struct ClaudeBadge: View {
     let state: ClaudeState
     /// Claude Code session name (from `@claude_title`), appended to the
     /// tooltip when known; "" hides it.

@@ -85,6 +85,19 @@ struct TmuxWindow: Identifiable, Hashable {
     var currentPath: String = ""
 }
 
+/// Collapse the common macOS/Linux home prefixes to "~" — we can't know a
+/// remote host's real home, but keeping the interesting tail of the path
+/// visible matters more than prefix fidelity in a narrow display. Shared by
+/// the sidebar's pinned rows and the toolbar's now-playing readout.
+func abbreviateHomePath(_ path: String) -> String {
+    for prefix in ["/Users/", "/home/"] where path.hasPrefix(prefix) {
+        let rest = path.dropFirst(prefix.count)
+        guard let slash = rest.firstIndex(of: "/") else { return "~" }
+        return "~" + rest[slash...]
+    }
+    return path
+}
+
 /// A tmux session. `id` is tmux's stable session id (e.g. "$5").
 struct TmuxSession: Identifiable, Hashable {
     let id: String

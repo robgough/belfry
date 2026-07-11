@@ -71,6 +71,15 @@ struct RootView: View {
             TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize)
                 .background(AppTheme.windowBackground)
                 .terminalAttachments(hosts: model.hosts, selection: selection)
+                // iTunes-style "now playing" readout, centered in the title
+                // bar: what's running in the selected window and where. Renders
+                // nothing when no window is selected, leaving the plain
+                // "Belfry" title as before.
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        NowPlayingView(hosts: model.hosts, selection: selection)
+                    }
+                }
         }
         .navigationTitle("Belfry")
         .tint(AppTheme.accent)
