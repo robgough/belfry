@@ -2,9 +2,34 @@
 
 All notable changes to Belfry are documented here.
 
-## [2026.07.11] — 2026-07-08
+## [2026.07.11] — 2026-07-11
 
 macOS release.
+
+### Added
+
+- **Pin sessions and windows.** Hover a session or window row (or right-click
+  it) to pin it to a new Pinned section at the top of the sidebar — the
+  working set, above the host tree. Pinned rows carry their own context:
+  machine name, session, and the active pane's working directory, plus the
+  Claude Code session name when Claude is running there. Pins persist across
+  restarts and survive tmux-server restarts; a pinned target that goes away
+  stays in place dimmed (with the reason) and re-lights when it returns.
+  Click the pin glyph to unpin.
+- **Claude Code session names.** The status hooks (now v3 — existing installs
+  upgrade automatically on connect) mirror the running session's name into
+  tmux, so it shows on pinned rows, in tree-row tooltips, and in the title
+  bar. Applies to Claude sessions started after the new hooks are in place.
+- **Now-playing title bar.** The title bar shows what you're attached to:
+  session/window (or Claude session name), host, working directory, and the
+  live Claude status chip.
+
+### Changed
+
+- **A finished Claude turn now shows a calm green "Idle", not "Waiting".**
+  The amber pulsing "Waiting" chip (and the Dock badge) is reserved for
+  turns genuinely blocked on your input, like permission prompts. Running
+  Claude sessions pick the fix up on their next restart.
 
 ### Fixed
 
