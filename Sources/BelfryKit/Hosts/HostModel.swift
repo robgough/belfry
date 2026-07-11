@@ -271,7 +271,13 @@ final class HostModel: Identifiable {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     switch outcome {
-                    case .status(let installed):
+                    case .status(installed: true, current: false):
+                        // Hooks from an older Belfry are installed — their commands
+                        // are stale (e.g. Stop used to report "waiting"). The user
+                        // already opted in, so refresh them in place; install() is
+                        // idempotent and reports .status(true, true), ending this.
+                        self?.installHooks()
+                    case .status(let installed, _):
                         self?.hooksStatus = installed ? .installed : .notInstalled
                     case .failure(let message):
                         self?.hooksStatus = .error(message)

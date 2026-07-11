@@ -30,7 +30,8 @@ enum ClaudeState: Hashable {
     case running     // Claude present, sub-state unknown (no hooks configured)
     case working     // Claude is busy working (from a hook)
     case background  // turn ended but background tasks/agents still running; auto-resumes
-    case waiting     // Claude finished its turn / needs your input (from a hook)
+    case idle        // Claude finished its turn — nothing pending (from a hook)
+    case waiting     // Claude is actively waiting for your input, e.g. a permission prompt (from a hook)
 
     /// `command` is the window's active-pane foreground command; `hookState` is
     /// the `@claude_state` window option ("" when unset).
@@ -44,7 +45,9 @@ enum ClaudeState: Hashable {
             self = shell ? .none : .working
         case "background", "bg", "agents":
             self = shell ? .none : .background
-        case "waiting", "idle", "done", "attention", "needs-input", "stop":
+        case "idle", "done", "stop":
+            self = shell ? .none : .idle
+        case "waiting", "attention", "needs-input":
             self = shell ? .none : .waiting
         default:
             // No hook signal: best-effort presence from the command name. ("node"
@@ -54,8 +57,9 @@ enum ClaudeState: Hashable {
         }
     }
 
-    /// Only a genuine your-turn wait pulls for attention (drives the Dock badge).
-    /// `.background` deliberately does *not* — Claude will resume on its own.
+    /// Only a genuine waiting-for-input state pulls for attention (drives the
+    /// Dock badge). `.background` deliberately does *not* — Claude will resume
+    /// on its own — and neither does `.idle` (the turn is over; nothing pending).
     var needsAttention: Bool { self == .waiting }
 }
 
