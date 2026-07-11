@@ -152,7 +152,12 @@ struct SessionTreeView: View {
         let target = resolved.target
         let index = model.pins.firstIndex(where: { $0.id == pin.id })
         PinnedRow(resolved: resolved, unpin: { model.unpin(pin) })
-            .tag(target)   // iOS native selection (pushes detail on iPhone)
+            // Tag with the *unwrapped* target. List(selection:) matches a
+            // WindowSelection tag; tagging with the optional directly makes the
+            // tag type Optional<WindowSelection>, which never matches — so on
+            // iOS (where the tap relies solely on native selection) pinned rows
+            // were dead. Non-live pins (target == nil) stay untagged.
+            .modifier(WindowSelectionTag(target: target))
             .modifier(SelectOnTap { if let target { selection = target } })
             .modifier(PinDragReorder(pin: pin, resolved: resolved, draggedPinID: $draggedPinID, model: model))
             .contextMenu {
@@ -289,6 +294,24 @@ private struct SelectOnTap: ViewModifier {
         #else
         content
         #endif
+    }
+}
+
+/// Native `List(selection:)` tag for a pinned row. The selection binding is
+/// `WindowSelection?`, so its SelectionValue is the *non-optional*
+/// `WindowSelection`; a row is only selectable when tagged with that type.
+/// `resolved.target` is optional (nil for a non-live pin), and tagging with it
+/// directly yields an `Optional<WindowSelection>` tag that silently never
+/// matches — which left iOS pinned rows unselectable (tap did nothing). Unwrap
+/// here and leave non-live pins untagged.
+private struct WindowSelectionTag: ViewModifier {
+    let target: WindowSelection?
+    func body(content: Content) -> some View {
+        if let target {
+            content.tag(target)
+        } else {
+            content
+        }
     }
 }
 
@@ -743,9 +766,12 @@ private struct PinnedRow: View {
             }
             Spacer(minLength: 0)
             // The leading pin glyph is the unpin control, so the trailing
-            // slot keeps the status badges full-time.
+            // slot keeps the status badges full-time. .fixedSize stops the
+            // greedy multi-line text column from compressing the badge off the
+            // row's trailing edge; iOS renders it icon-only so it always fits.
             if let window = resolved.window {
-                WindowBadges(window: window)
+                WindowBadges(window: window, compact: badgesCompact)
+                    .fixedSize()
             }
         }
         .padding(.vertical, 4)
@@ -808,6 +834,17 @@ private struct PinnedRow: View {
     private var contextWindow: TmuxWindow? {
         resolved.window
             ?? resolved.session.flatMap { s in s.windows.first(where: { $0.isActive }) ?? s.windows.first }
+    }
+
+    /// iOS pinned rows are taller and their text columns greedier, so the full
+    /// glyph-plus-word Claude chip got squeezed off the trailing edge — show it
+    /// icon-only there. The Mac has room for the labelled chip.
+    private var badgesCompact: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
+        #endif
     }
 
     /// The context window's working directory ("" from tmux means unknown).
@@ -996,6 +1033,9 @@ private struct WindowRow: View {
 /// the Claude state chip, or the unseen-activity dot.
 private struct WindowBadges: View {
     let window: TmuxWindow
+    /// Forwarded to the Claude chip: icon-only where the row is too narrow for
+    /// the status word (iOS pinned rows).
+    var compact = false
     var body: some View {
         HStack(spacing: 5) {
             if window.hasBell {
@@ -1005,7 +1045,7 @@ private struct WindowBadges: View {
                     .hoverHint("Bell rang in this window")
             }
             if window.claudeState != .none {
-                ClaudeBadge(state: window.claudeState, title: window.claudeTitle)
+                ClaudeBadge(state: window.claudeState, title: window.claudeTitle, compact: compact)
             } else if window.hasActivity {
                 Circle().fill(AppTheme.statusWarn).frame(width: 5, height: 5)
                     .hoverHint("Unseen activity")
@@ -1049,6 +1089,10 @@ struct ClaudeBadge: View {
     /// Claude Code session name (from `@claude_title`), appended to the
     /// tooltip when known; "" hides it.
     var title: String = ""
+    /// Icon-only: drop the status word and tighten the capsule, for rows too
+    /// narrow to fit "Working"/"Waiting" (iOS pinned items). The glyph, color
+    /// and tooltip are unchanged, so the state still reads at a glance.
+    var compact = false
     var body: some View {
         switch state {
         case .none:
@@ -1087,11 +1131,11 @@ struct ClaudeBadge: View {
     ) -> some View {
         HStack(spacing: 3) {
             glyph()
-            Text(text)
+            if !compact { Text(text) }
         }
         .font(.system(size: 10, weight: weight))
         .foregroundStyle(color)
-        .padding(.horizontal, 5)
+        .padding(.horizontal, compact ? 3 : 5)
         .padding(.vertical, 1.5)
         .background(Capsule().fill(color.opacity(0.14)))
         .hoverHint(title.isEmpty ? help : "\(help) — session “\(title)”")
