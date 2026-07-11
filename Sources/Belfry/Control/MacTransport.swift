@@ -154,7 +154,7 @@ struct TmuxHooksManager: HooksManaging {
 
     private func map(_ outcome: ClaudeHooks.Outcome) -> HooksOutcome {
         switch outcome {
-        case .status(let installed): return .status(installed: installed)
+        case .status(let installed, let current): return .status(installed: installed, current: current)
         case .failure(let message): return .failure(message)
         }
     }

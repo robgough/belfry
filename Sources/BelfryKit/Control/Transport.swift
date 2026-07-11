@@ -79,9 +79,10 @@ enum RemoteTmux {
 }
 
 /// Outcome of a Claude-hooks management operation (mirrors ClaudeHooks.Outcome,
-/// which is macOS-only).
+/// which is macOS-only). `current` is false when hooks are installed but were
+/// written by an older Belfry (stale commands) — the owner should reinstall.
 enum HooksOutcome {
-    case status(installed: Bool)
+    case status(installed: Bool, current: Bool)
     case failure(String)
 }
 

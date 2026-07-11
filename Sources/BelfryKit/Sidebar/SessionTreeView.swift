@@ -686,7 +686,9 @@ private struct WindowIndexChip: View {
 /// Per-window Claude Code status chip: an indicator plus a word, so states are legible
 /// at a glance. `.working` shows a braille "processing" spinner; `.background` (Claude's
 /// turn ended but background tasks/agents are still running) pulses purple as "Agents";
-/// `.waiting` is an amber question mark — Claude handed the turn back and needs input.
+/// `.idle` is a calm green check — the turn is over, nothing pending; `.waiting` is an
+/// amber question mark — Claude is actively waiting for your input (e.g. a permission
+/// prompt), the only state that pulses and badges the Dock.
 private struct ClaudeBadge: View {
     let state: ClaudeState
     var body: some View {
@@ -694,8 +696,8 @@ private struct ClaudeBadge: View {
         case .none:
             EmptyView()
         case .running:
-            chip(text: "Idle", color: .secondary, weight: .regular,
-                 help: "Claude is running here — install status hooks for live Working / Waiting status") {
+            chip(text: "Claude", color: .secondary, weight: .regular,
+                 help: "Claude is running here — install status hooks for live Working / Idle / Waiting status") {
                 Image(systemName: "sparkle")
             }
         case .working:
@@ -707,6 +709,11 @@ private struct ClaudeBadge: View {
             chip(text: "Agents", color: .purple, weight: .medium,
                  help: "Claude's turn ended, but background tasks or agents are still running — it will resume on its own") {
                 BrailleSpinner(color: .purple)
+            }
+        case .idle:
+            chip(text: "Idle", color: AppTheme.statusGood, weight: .regular,
+                 help: "Claude finished its turn — nothing pending") {
+                Image(systemName: "checkmark.circle")
             }
         case .waiting:
             chip(text: "Waiting", color: .orange, weight: .semibold,

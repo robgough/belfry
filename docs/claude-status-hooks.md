@@ -4,14 +4,16 @@ Belfry shows a per-window status chip (icon **and** word) for what Claude Code i
 
 | Chip | Meaning |
 |---|---|
-| grey `✦ Idle` | Claude is **running** in this window (best-effort, no setup) |
+| grey `✦ Claude` | Claude is **running** in this window (best-effort, no setup) |
 | blue `⠋ Working` (braille spinner) | Claude is **working** (needs hooks, below) |
 | purple `⠋ Agents` (braille spinner) | Claude's turn ended but **background tasks or agents are still running** — it will resume on its own, so it's *not* your turn (needs hooks) |
-| amber `? Waiting` (pulsing) | Claude is **waiting for you** — finished its turn or needs input (needs hooks) |
+| green `✓ Idle` | Claude **finished its turn** — nothing pending (needs hooks) |
+| amber `? Waiting` (pulsing) | Claude is **actively waiting for your input** — e.g. a permission prompt (needs hooks) |
 | — | no Claude here |
 
-When any window is *waiting for you*, Belfry also shows a count on its Dock icon.
-**Agents** windows deliberately don't badge the Dock — nothing needs you there yet.
+When any window is *waiting for your input*, Belfry also shows a count on its Dock
+icon. **Agents** and **Idle** windows deliberately don't badge the Dock — nothing
+is blocked on you there.
 
 ## How it works
 
@@ -22,7 +24,7 @@ Belfry's control connection reads two things per window over tmux:
   too ambiguous — so if your Claude launches as `node`, you'll only get the precise
   states below.)
 - a `@claude_state` window option — set precisely by Claude Code **hooks**. When
-  present it wins, giving the exact **working** / **waiting** states.
+  present it wins, giving the exact **working** / **idle** / **waiting** states.
 
 ## Enabling the precise states (recommended)
 
@@ -33,6 +35,10 @@ SSH), preserving your other settings/hooks, idempotently, with a backup at
 **Remove Claude Status Hooks** to strip just Belfry's entries again (your other settings and
 hooks are left untouched). Hooks apply to **new** Claude sessions, so restart any running
 `claude` after installing or removing.
+
+Belfry tags each installed command with a versioned marker (`# belfry-status-v2`). When a
+newer Belfry connects and finds hooks tagged with an older marker, it silently reinstalls
+them, so command changes roll out to existing installs on the next connect.
 
 Or add them by hand — these stamp the current tmux window with Claude's state; Belfry
 reads it. They no-op when you're not inside tmux.
@@ -47,10 +53,10 @@ reads it. They no-op when you're not inside tmux.
       { "matcher": "*", "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] && tmux set -w @claude_state working" } ] }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] && tmux set -w @claude_state waiting" } ] }
+      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); case \"$c\" in *'\"notification_type\":\"idle_prompt\"'*) st=idle;; *) st=waiting;; esac; tmux set -w @claude_state \"$st\"" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); case \"$c\" in *'\"background_tasks\":[]'*) st=waiting;; *'\"background_tasks\":['*) st=background;; *) st=waiting;; esac; tmux set -w @claude_state \"$st\"" } ] }
+      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); case \"$c\" in *'\"background_tasks\":[]'*) st=idle;; *'\"background_tasks\":['*) st=background;; *) st=idle;; esac; tmux set -w @claude_state \"$st\"" } ] }
     ],
     "SessionEnd": [
       { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] && tmux set -uw @claude_state" } ] }
@@ -60,11 +66,14 @@ reads it. They no-op when you're not inside tmux.
 ```
 
 - **UserPromptSubmit / PreToolUse** → `working` (you sent a prompt / Claude is running a tool).
-- **Notification** → `waiting` (Claude wants input or a permission).
-- **Stop** → `waiting` when Claude finished its turn, **or `background`** if its stdin JSON
-  still lists `background_tasks` (a background bash command or background agent is running and
-  will auto-resume Claude). This is detected in pure POSIX `sh` — no `jq`/Python — so it works
-  over plain SSH too.
+- **Notification** → `waiting` (Claude wants input or a permission) — **except** the
+  `idle_prompt` nudge that fires ~60s after a finished turn (detected via
+  `"notification_type":"idle_prompt"` in its stdin JSON), which (re)sets `idle`:
+  the turn is simply over, nothing is blocked on you.
+- **Stop** → `idle` when Claude finished its turn (nothing pending), **or `background`**
+  if its stdin JSON still lists `background_tasks` (a background bash command or background
+  agent is running and will auto-resume Claude). This is detected in pure POSIX `sh` —
+  no `jq`/Python — so it works over plain SSH too.
 - **SessionEnd** → clears the option when Claude exits (so the badge disappears).
   (Belfry also clears the badge on its own if the window drops back to a plain shell,
   in case `SessionEnd` doesn't fire.)

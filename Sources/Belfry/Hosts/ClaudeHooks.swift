@@ -11,54 +11,86 @@ import Foundation
 enum ClaudeHooks {
     static let marker = "belfry-status"
 
+    /// Bumped whenever any hook command below changes. Installed commands are
+    /// tagged `# belfry-status-v<N>`; `check()` reports hooks tagged with an
+    /// older (or bare) marker as installed-but-outdated, and `HostModel`
+    /// silently reinstalls to roll the new commands out to existing installs.
+    static let version = 2
+    static var versionedMarker: String { "\(marker)-v\(version)" }
+
     private struct HookError: Error { let message: String }
 
     /// event → (command, optional tool matcher). UserPromptSubmit/PreToolUse mean
-    /// "working"; Notification means "waiting for you"; Stop means "waiting" *unless*
-    /// background tasks/agents are still running (then "background"); SessionEnd clears it.
+    /// "working"; Notification means "waiting for you" (except the idle nudge);
+    /// Stop means "idle" — the turn is over — *unless* background tasks/agents are
+    /// still running (then "background"); SessionEnd clears it.
     private static var spec: [(event: String, command: String, matcher: String?)] {
         [
-            ("UserPromptSubmit", set("working"), nil),
-            ("PreToolUse",       set("working"), "*"),
-            ("Notification",     set("waiting"), nil),
-            ("Stop",             stopCommand(),  nil),
-            ("SessionEnd",       unset(),        nil),
+            ("UserPromptSubmit", set("working"),         nil),
+            ("PreToolUse",       set("working"),         "*"),
+            ("Notification",     notificationCommand(),  nil),
+            ("Stop",             stopCommand(),          nil),
+            ("SessionEnd",       unset(),                nil),
         ]
     }
 
     private static func set(_ state: String) -> String {
-        "[ -n \"$TMUX\" ] && tmux set -w @claude_state \(state) # \(marker)"
+        "[ -n \"$TMUX\" ] && tmux set -w @claude_state \(state) # \(versionedMarker)"
     }
     private static func unset() -> String {
-        "[ -n \"$TMUX\" ] && tmux set -uw @claude_state # \(marker)"
+        "[ -n \"$TMUX\" ] && tmux set -uw @claude_state # \(versionedMarker)"
     }
 
     /// The Stop hook fires at every turn end. Its stdin JSON carries a `background_tasks`
     /// array that's non-empty exactly when background bash/agents are still in flight (and
     /// will auto-resume Claude). We string-match that array in pure POSIX sh — no jq/python
     /// — so remote hosts still need nothing but a shell: strip whitespace, then a non-empty
-    /// `"background_tasks":[…]` ⇒ "background" (not your turn), else "waiting" (your turn).
+    /// `"background_tasks":[…]` ⇒ "background" (not your turn), else "idle" (turn over,
+    /// nothing pending — deliberately *not* "waiting", which is reserved for Claude
+    /// actively needing input, e.g. a permission prompt).
     private static func stopCommand() -> String {
         "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); "
         + "case \"$c\" in "
-        + "*'\"background_tasks\":[]'*) st=waiting;; "
+        + "*'\"background_tasks\":[]'*) st=idle;; "
         + "*'\"background_tasks\":['*) st=background;; "
+        + "*) st=idle;; esac; "
+        + "tmux set -w @claude_state \"$st\" # \(versionedMarker)"
+    }
+
+    /// The Notification hook fires both when Claude genuinely needs input (its
+    /// stdin JSON has `"notification_type":"permission_prompt"`) and as an idle
+    /// nudge ~60s after a finished turn (`"notification_type":"idle_prompt"`).
+    /// Only the former is a real "waiting"; the nudge just restates that the
+    /// turn is over, so it (re)sets "idle" instead — otherwise every finished
+    /// turn would flip to an amber "Waiting" a minute later. Same pure-POSIX
+    /// stdin matching as the Stop hook; anything unrecognised (including older
+    /// Claude Codes without `notification_type`) defaults to "waiting".
+    private static func notificationCommand() -> String {
+        "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); "
+        + "case \"$c\" in "
+        + "*'\"notification_type\":\"idle_prompt\"'*) st=idle;; "
         + "*) st=waiting;; esac; "
-        + "tmux set -w @claude_state \"$st\" # \(marker)"
+        + "tmux set -w @claude_state \"$st\" # \(versionedMarker)"
     }
 
     // MARK: Public API
 
     enum Outcome {
-        case status(installed: Bool)
+        case status(installed: Bool, current: Bool)
         case failure(String)
     }
 
-    /// Read settings.json for the host and report whether our hooks are present.
+    /// Read settings.json for the host and report whether our hooks are present,
+    /// and if so whether they carry the current versioned marker (an older or
+    /// bare `belfry-status` tag means an outdated install that should be
+    /// refreshed).
     static func check(_ transport: TmuxTransport) -> Outcome {
         switch readSettings(transport) {
         case .failure(let error): return .failure(error.message)
-        case .success(let text): return .status(installed: (text ?? "").contains(marker))
+        case .success(let text):
+            let text = text ?? ""
+            return .status(installed: text.contains(marker),
+                           current: text.contains(versionedMarker))
         }
     }
 
@@ -74,7 +106,7 @@ enum ClaudeHooks {
         }
         switch writeSettings(transport, contents: merged) {
         case .failure(let error): return .failure(error.message)
-        case .success: return .status(installed: true)
+        case .success: return .status(installed: true, current: true)
         }
     }
 
@@ -87,13 +119,13 @@ enum ClaudeHooks {
         case .failure(let error): return .failure(error.message)
         case .success(let text): existing = text
         }
-        guard (existing ?? "").contains(marker) else { return .status(installed: false) }
+        guard (existing ?? "").contains(marker) else { return .status(installed: false, current: false) }
         guard let stripped = stripped(from: existing) else {
             return .failure("existing settings.json isn't valid JSON — not modifying it")
         }
         switch writeSettings(transport, contents: stripped) {
         case .failure(let error): return .failure(error.message)
-        case .success: return .status(installed: false)
+        case .success: return .status(installed: false, current: false)
         }
     }
 
