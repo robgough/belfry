@@ -26,6 +26,12 @@ Belfry's control connection reads two things per window over tmux:
 - a `@claude_state` window option — set precisely by Claude Code **hooks**. When
   present it wins, giving the exact **working** / **idle** / **waiting** states.
 
+The same hooks also mirror the Claude Code **session name** (e.g. `belfry-60`, or
+whatever you named the session) into a `@claude_title` window option, looked up in
+Claude Code's session registry (`~/.claude/sessions/<pid>.json`) by the `session_id`
+each hook payload carries. Belfry shows it on pinned rows and in the status chip's
+tooltip. Older Claude Codes without the registry simply never set it.
+
 ## Enabling the precise states (recommended)
 
 **Easiest:** right-click a host in Belfry's sidebar → **Install Claude Status Hooks…**.
@@ -36,7 +42,7 @@ SSH), preserving your other settings/hooks, idempotently, with a backup at
 hooks are left untouched). Hooks apply to **new** Claude sessions, so restart any running
 `claude` after installing or removing.
 
-Belfry tags each installed command with a versioned marker (`# belfry-status-v2`). When a
+Belfry tags each installed command with a versioned marker (`# belfry-status-v3`). When a
 newer Belfry connects and finds hooks tagged with an older marker, it silently reinstalls
 them, so command changes roll out to existing installs on the next connect.
 
@@ -47,19 +53,19 @@ reads it. They no-op when you're not inside tmux.
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] && tmux set -w @claude_state working" } ] }
+      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); tmux set -w @claude_state working; sid=$(printf '%s' \"$s\" | tr -d '[:space:]' | sed -n 's/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p'); if [ -n \"$sid\" ]; then t=$(grep -h \"\\\"sessionId\\\":\\\"$sid\\\"\" \"$HOME\"/.claude/sessions/*.json 2>/dev/null | sed -n 's/.*\"name\":\"\\([^\"]*\\)\".*/\\1/p' | head -1 | tr -d '\\\\\\t\\r\\n' | cut -c1-80); if [ -n \"$t\" ]; then tmux set -w @claude_title \"$t\"; fi; fi;" } ] }
     ],
     "PreToolUse": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] && tmux set -w @claude_state working" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); tmux set -w @claude_state working; sid=$(printf '%s' \"$s\" | tr -d '[:space:]' | sed -n 's/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p'); if [ -n \"$sid\" ]; then t=$(grep -h \"\\\"sessionId\\\":\\\"$sid\\\"\" \"$HOME\"/.claude/sessions/*.json 2>/dev/null | sed -n 's/.*\"name\":\"\\([^\"]*\\)\".*/\\1/p' | head -1 | tr -d '\\\\\\t\\r\\n' | cut -c1-80); if [ -n \"$t\" ]; then tmux set -w @claude_title \"$t\"; fi; fi;" } ] }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); case \"$c\" in *'\"notification_type\":\"idle_prompt\"'*) st=idle;; *) st=waiting;; esac; tmux set -w @claude_state \"$st\"" } ] }
+      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); case \"$c\" in *'\"notification_type\":\"idle_prompt\"'*) st=idle;; *) st=waiting;; esac; tmux set -w @claude_state \"$st\"; sid=$(printf '%s' \"$s\" | tr -d '[:space:]' | sed -n 's/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p'); if [ -n \"$sid\" ]; then t=$(grep -h \"\\\"sessionId\\\":\\\"$sid\\\"\" \"$HOME\"/.claude/sessions/*.json 2>/dev/null | sed -n 's/.*\"name\":\"\\([^\"]*\\)\".*/\\1/p' | head -1 | tr -d '\\\\\\t\\r\\n' | cut -c1-80); if [ -n \"$t\" ]; then tmux set -w @claude_title \"$t\"; fi; fi;" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); case \"$c\" in *'\"background_tasks\":[]'*) st=idle;; *'\"background_tasks\":['*) st=background;; *) st=idle;; esac; tmux set -w @claude_state \"$st\"" } ] }
+      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; s=$(cat); c=$(printf '%s' \"$s\" | tr -d '[:space:]'); case \"$c\" in *'\"background_tasks\":[]'*) st=idle;; *'\"background_tasks\":['*) st=background;; *) st=idle;; esac; tmux set -w @claude_state \"$st\"; sid=$(printf '%s' \"$s\" | tr -d '[:space:]' | sed -n 's/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p'); if [ -n \"$sid\" ]; then t=$(grep -h \"\\\"sessionId\\\":\\\"$sid\\\"\" \"$HOME\"/.claude/sessions/*.json 2>/dev/null | sed -n 's/.*\"name\":\"\\([^\"]*\\)\".*/\\1/p' | head -1 | tr -d '\\\\\\t\\r\\n' | cut -c1-80); if [ -n \"$t\" ]; then tmux set -w @claude_title \"$t\"; fi; fi;" } ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] && tmux set -uw @claude_state" } ] }
+      { "hooks": [ { "type": "command", "command": "[ -n \"$TMUX\" ] || exit 0; tmux set -uw @claude_state; tmux set -uw @claude_title" } ] }
     ]
   }
 }
@@ -74,7 +80,11 @@ reads it. They no-op when you're not inside tmux.
   if its stdin JSON still lists `background_tasks` (a background bash command or background
   agent is running and will auto-resume Claude). This is detected in pure POSIX `sh` —
   no `jq`/Python — so it works over plain SSH too.
-- **SessionEnd** → clears the option when Claude exits (so the badge disappears).
+- Every state hook also looks up the session's `name` in `~/.claude/sessions/*.json`
+  by the payload's `session_id` and mirrors it into `@claude_title` (backslashes,
+  tabs and newlines stripped, capped at 80 bytes, so it can't break Belfry's
+  TAB-separated window parsing). Nothing is set if the lookup finds nothing.
+- **SessionEnd** → clears both options when Claude exits (so the badge disappears).
   (Belfry also clears the badge on its own if the window drops back to a plain shell,
   in case `SessionEnd` doesn't fire.)
 

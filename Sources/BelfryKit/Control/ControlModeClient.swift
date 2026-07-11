@@ -97,13 +97,15 @@ final class ControlModeClient {
     private static let sessionFormat =
         "SESS #{session_id} #{session_attached} #{session_windows} #{session_name}"
     // `pane_current_command` (active pane) + `@claude_state` (window option set by
-    // Claude Code hooks) drive the per-window Claude status badge;
-    // `pane_current_path` gives pinned rows their working-directory context.
+    // Claude Code hooks) drive the per-window Claude status badge; `@claude_title`
+    // (same hooks) carries the Claude session name; `pane_current_path` gives
+    // pinned rows their working-directory context.
     // Window fields are TAB-separated (unlike the session line): the path can
     // contain spaces, so positional space-splitting can't carry both it and the
-    // greedy window name.
+    // greedy window name. The hooks strip tabs/newlines from the title before
+    // setting it, so it can't break this positional parse.
     private static let windowFormat =
-        "WIN\t#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity_flag}\t#{window_bell_flag}\t#{pane_current_command}\t#{@claude_state}\t#{pane_current_path}\t#{window_name}"
+        "WIN\t#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity_flag}\t#{window_bell_flag}\t#{pane_current_command}\t#{@claude_state}\t#{@claude_title}\t#{pane_current_path}\t#{window_name}"
 
     /// Poll cadence before the server has proven push support (old tmux), and
     /// the slow backstop once `%subscription-changed` notifications flow.
@@ -126,7 +128,7 @@ final class ControlModeClient {
     private static let treeSubscriptionFormat =
         "#{S:#{session_id}#{session_attached}#{session_name}="
         + "#{W:#{window_id}#{window_index}#{window_active}#{window_activity_flag}"
-        + "#{window_bell_flag}#{pane_current_command}#{@claude_state}"
+        + "#{window_bell_flag}#{pane_current_command}#{@claude_state}#{@claude_title}"
         + "#{pane_current_path}#{window_name}|}~}"
 
     @MainActor
@@ -463,20 +465,21 @@ final class ControlModeClient {
     }
 
     private static func parseWindow(_ line: String) -> TmuxWindow? {
-        // WIN <sid> <wid> <index> <active> <activity> <bell> <command> <claude_state> <path> <name...>
+        // WIN <sid> <wid> <index> <active> <activity> <bell> <command> <claude_state> <claude_title> <path> <name...>
         // TAB-separated (see `windowFormat`): the path can contain spaces.
-        let parts = line.split(separator: "\t", maxSplits: 10, omittingEmptySubsequences: false)
-        guard parts.count >= 11 else { return nil }
+        let parts = line.split(separator: "\t", maxSplits: 11, omittingEmptySubsequences: false)
+        guard parts.count >= 12 else { return nil }
         return TmuxWindow(
             id: String(parts[2]),
             sessionID: String(parts[1]),
             index: Int(parts[3]) ?? 0,
-            name: String(parts[10]),
+            name: String(parts[11]),
             isActive: parts[4] == "1",
             hasActivity: parts[5] == "1",
             hasBell: parts[6] == "1",
             claudeState: ClaudeState(command: String(parts[7]), hookState: String(parts[8])),
-            currentPath: String(parts[9])
+            claudeTitle: String(parts[9]),
+            currentPath: String(parts[10])
         )
     }
 

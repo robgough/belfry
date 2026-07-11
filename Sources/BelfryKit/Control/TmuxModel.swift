@@ -76,6 +76,10 @@ struct TmuxWindow: Identifiable, Hashable {
     /// Claude. Cleared by tmux when the window is selected (i.e. when you click it).
     var hasBell: Bool = false
     var claudeState: ClaudeState = .none
+    /// The Claude Code *session name* running here (e.g. "belfry-60"), from the
+    /// `@claude_title` window option the status hooks maintain ("" when unknown).
+    /// Shown on pinned rows so a pinned Claude window says which session it is.
+    var claudeTitle: String = ""
     /// tmux's `pane_current_path` for the window's active pane ("" when unknown).
     /// Shown on pinned rows, where a window appears outside its host grouping.
     var currentPath: String = ""

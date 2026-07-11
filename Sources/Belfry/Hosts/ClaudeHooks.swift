@@ -15,7 +15,7 @@ enum ClaudeHooks {
     /// tagged `# belfry-status-v<N>`; `check()` reports hooks tagged with an
     /// older (or bare) marker as installed-but-outdated, and `HostModel`
     /// silently reinstalls to roll the new commands out to existing installs.
-    static let version = 2
+    static let version = 3
     static var versionedMarker: String { "\(marker)-v\(version)" }
 
     private struct HookError: Error { let message: String }
@@ -23,7 +23,9 @@ enum ClaudeHooks {
     /// event → (command, optional tool matcher). UserPromptSubmit/PreToolUse mean
     /// "working"; Notification means "waiting for you" (except the idle nudge);
     /// Stop means "idle" — the turn is over — *unless* background tasks/agents are
-    /// still running (then "background"); SessionEnd clears it.
+    /// still running (then "background"); SessionEnd clears it. Every state hook
+    /// also mirrors the Claude Code session name into `@claude_title` (see
+    /// `titleMirror()`), which SessionEnd clears alongside the state.
     private static var spec: [(event: String, command: String, matcher: String?)] {
         [
             ("UserPromptSubmit", set("working"),         nil),
@@ -35,10 +37,33 @@ enum ClaudeHooks {
     }
 
     private static func set(_ state: String) -> String {
-        "[ -n \"$TMUX\" ] && tmux set -w @claude_state \(state) # \(versionedMarker)"
+        "[ -n \"$TMUX\" ] || exit 0; s=$(cat); "
+        + "tmux set -w @claude_state \(state); \(titleMirror()) # \(versionedMarker)"
     }
     private static func unset() -> String {
-        "[ -n \"$TMUX\" ] && tmux set -uw @claude_state # \(versionedMarker)"
+        "[ -n \"$TMUX\" ] || exit 0; tmux set -uw @claude_state; "
+        + "tmux set -uw @claude_title # \(versionedMarker)"
+    }
+
+    /// Shell fragment that mirrors the Claude Code *session name* into a
+    /// `@claude_title` window option, so the sidebar can say which Claude
+    /// session lives in a window. Claude Code registers every running session
+    /// in `~/.claude/sessions/<pid>.json` (single-line JSON carrying
+    /// `sessionId` and `name`); the hook's stdin JSON — read into `$s` by the
+    /// caller — carries the `session_id` to look it up by. Pure POSIX
+    /// (sed/grep/tr/cut) like the other hooks, so remote hosts need nothing
+    /// but a shell. The name is sanitized hard — backslashes, tabs and
+    /// CR/LF stripped, capped at 80 bytes — because it travels through
+    /// Belfry's TAB-separated control-mode window format (and it's set as a
+    /// direct `tmux` argument, so quotes/spaces are otherwise fine). Older
+    /// Claude Codes without the sessions registry simply never set the
+    /// option; the `if`s keep the hook's exit status 0 either way.
+    private static func titleMirror() -> String {
+        "sid=$(printf '%s' \"$s\" | tr -d '[:space:]' | sed -n 's/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p'); "
+        + "if [ -n \"$sid\" ]; then "
+        + "t=$(grep -h \"\\\"sessionId\\\":\\\"$sid\\\"\" \"$HOME\"/.claude/sessions/*.json 2>/dev/null "
+        + "| sed -n 's/.*\"name\":\"\\([^\"]*\\)\".*/\\1/p' | head -1 | tr -d '\\\\\\t\\r\\n' | cut -c1-80); "
+        + "if [ -n \"$t\" ]; then tmux set -w @claude_title \"$t\"; fi; fi;"
     }
 
     /// The Stop hook fires at every turn end. Its stdin JSON carries a `background_tasks`
@@ -54,7 +79,7 @@ enum ClaudeHooks {
         + "*'\"background_tasks\":[]'*) st=idle;; "
         + "*'\"background_tasks\":['*) st=background;; "
         + "*) st=idle;; esac; "
-        + "tmux set -w @claude_state \"$st\" # \(versionedMarker)"
+        + "tmux set -w @claude_state \"$st\"; \(titleMirror()) # \(versionedMarker)"
     }
 
     /// The Notification hook fires both when Claude genuinely needs input (its
@@ -70,7 +95,7 @@ enum ClaudeHooks {
         + "case \"$c\" in "
         + "*'\"notification_type\":\"idle_prompt\"'*) st=idle;; "
         + "*) st=waiting;; esac; "
-        + "tmux set -w @claude_state \"$st\" # \(versionedMarker)"
+        + "tmux set -w @claude_state \"$st\"; \(titleMirror()) # \(versionedMarker)"
     }
 
     // MARK: Public API

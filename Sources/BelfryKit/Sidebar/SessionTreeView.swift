@@ -606,9 +606,12 @@ private struct PinnedSectionHeader: View {
 }
 
 /// A row in the Pinned section. It appears outside its host grouping, so it
-/// carries its own context line: machine name, session (for window pins), and
-/// the active pane's working directory. Unresolved pins stay in place dimmed —
-/// unpin them here, or leave them to re-resolve when the target returns.
+/// carries its own context: machine name and session (for window pins), the
+/// Claude Code session name when Claude is running there, and the active
+/// pane's working directory on its own line. Pins are the working set, so the
+/// row runs slightly larger than the tree's. Unresolved pins stay in place
+/// dimmed — unpin them here, or leave them to re-resolve when the target
+/// returns.
 private struct PinnedRow: View {
     let resolved: ResolvedPin
     let unpin: () -> Void
@@ -617,19 +620,37 @@ private struct PinnedRow: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "pin.fill")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(resolved.isLive ? AppTheme.accent : Color.secondary)
                 .frame(width: 16, height: 15)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 1.5) {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 10))
+                if let claudeTitle {
+                    HStack(spacing: 3) {
+                        Image(systemName: "sparkle")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text(claudeTitle)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
+                    .hoverHint("Claude Code session “\(claudeTitle)”")
+                }
+                Text(contextLine)
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if let pathLine {
+                    Text(pathLine)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
             Spacer(minLength: 0)
             // Same trailing-slot swap as WindowRow: badges give way to the
@@ -645,7 +666,7 @@ private struct PinnedRow: View {
                     .allowsHitTesting(isHovered)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
         .opacity(resolved.isLive ? 1 : 0.55)
         .onHover { isHovered = $0 }
@@ -663,19 +684,34 @@ private struct PinnedRow: View {
         return resolved.session?.name ?? resolved.pin.sessionName
     }
 
-    /// "host · session · ~/path" (window pins) or "host · ~/path" (session
-    /// pins); the path gives way to a why-it's-dimmed note when unresolved.
-    private var subtitle: String {
+    /// "host · session" (window pins) or "host" (session pins), with a
+    /// why-it's-dimmed note appended while unresolved.
+    private var contextLine: String {
         var parts: [String] = [resolved.host?.displayName ?? resolved.pin.hostID]
         if resolved.pin.windowID != nil {
             parts.append(resolved.session?.name ?? resolved.pin.sessionName)
         }
         if let note = staleNote {
             parts.append(note)
-        } else if let path = currentPath {
-            parts.append(abbreviatePath(path))
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// The working directory on its own line (~-abbreviated); hidden while a
+    /// stale note explains the row instead.
+    private var pathLine: String? {
+        guard staleNote == nil, let path = currentPath else { return nil }
+        return abbreviatePath(path)
+    }
+
+    /// The Claude Code session name running in the pinned window (session pins
+    /// report their context window's), from the `@claude_title` option the
+    /// status hooks maintain. Suppressed whenever the status badge would be —
+    /// a leftover title with no Claude in the window is stale.
+    private var claudeTitle: String? {
+        guard let window = contextWindow, window.claudeState != .none,
+              !window.claudeTitle.isEmpty else { return nil }
+        return window.claudeTitle
     }
 
     private var staleNote: String? {
@@ -686,12 +722,16 @@ private struct PinnedRow: View {
         return nil
     }
 
-    /// The pinned window's working directory; session pins report their
-    /// active window's.
-    private var currentPath: String? {
-        let window = resolved.window
+    /// The window whose live state contextualizes the row: the pinned window,
+    /// or the session's active window for session pins.
+    private var contextWindow: TmuxWindow? {
+        resolved.window
             ?? resolved.session.flatMap { s in s.windows.first(where: { $0.isActive }) ?? s.windows.first }
-        guard let path = window?.currentPath, !path.isEmpty else { return nil }
+    }
+
+    /// The context window's working directory ("" from tmux means unknown).
+    private var currentPath: String? {
+        guard let path = contextWindow?.currentPath, !path.isEmpty else { return nil }
         return path
     }
 
@@ -896,7 +936,7 @@ private struct WindowBadges: View {
                     .hoverHint("Bell rang in this window")
             }
             if window.claudeState != .none {
-                ClaudeBadge(state: window.claudeState)
+                ClaudeBadge(state: window.claudeState, title: window.claudeTitle)
             } else if window.hasActivity {
                 Circle().fill(AppTheme.statusWarn).frame(width: 5, height: 5)
                     .hoverHint("Unseen activity")
@@ -933,6 +973,9 @@ private struct WindowIndexChip: View {
 /// prompt), the only state that pulses and badges the Dock.
 private struct ClaudeBadge: View {
     let state: ClaudeState
+    /// Claude Code session name (from `@claude_title`), appended to the
+    /// tooltip when known; "" hides it.
+    var title: String = ""
     var body: some View {
         switch state {
         case .none:
@@ -978,7 +1021,7 @@ private struct ClaudeBadge: View {
         .padding(.horizontal, 5)
         .padding(.vertical, 1.5)
         .background(Capsule().fill(color.opacity(0.14)))
-        .hoverHint(help)
+        .hoverHint(title.isEmpty ? help : "\(help) — session “\(title)”")
     }
 }
 
