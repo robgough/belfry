@@ -25,12 +25,13 @@ private struct InlineLinkButton: View {
     }
 }
 
-/// Left sidebar: a Host → Session → Window tree. Each host is a collapsible
-/// section; sessions list their windows beneath. Window rows are the selectable
-/// leaves (tagged with their host + window id). Right-click rows for actions;
-/// text-entry actions raise a `SidebarPrompt`, destructive ones a `ConfirmAction`.
-/// Hovering a row reveals its key actions inline (new session / new window /
-/// split); everything stays reachable from the context menus too.
+/// Left sidebar: a Host → Session → Window tree, topped by a Pinned section
+/// when anything is pinned. Each host is a collapsible section; sessions list
+/// their windows beneath. Window rows are the selectable leaves (tagged with
+/// their host + window id). Right-click rows for actions; text-entry actions
+/// raise a `SidebarPrompt`, destructive ones a `ConfirmAction`. Hovering a row
+/// reveals its key actions inline (pin / new session / new window / split);
+/// everything stays reachable from the context menus too.
 struct SessionTreeView: View {
     let hosts: [HostModel]
     let model: AppModel
@@ -105,6 +106,15 @@ struct SessionTreeView: View {
     }
 
     @ViewBuilder private var treeSections: some View {
+        if !model.pins.isEmpty {
+            Section {
+                ForEach(model.pins) { pin in
+                    pinnedRow(for: pin)
+                }
+            } header: {
+                PinnedSectionHeader()
+            }
+        }
         ForEach(hosts) { host in
             Section(isExpanded: expansionBinding(for: host)) {
                 HostBody(host: host, model: model,
@@ -114,6 +124,35 @@ struct SessionTreeView: View {
                            prompt: $prompt, confirm: $confirm)
             }
         }
+    }
+
+    // MARK: Pinned section
+
+    /// Join a pin against live state. tmux ids survive reconnects but not
+    /// server restarts, so a session whose id is gone re-resolves by its
+    /// (user-chosen, stable) name; windows resolve by id only — index/name
+    /// fallbacks would too easily land on the wrong window.
+    private func resolve(_ pin: PinnedItem) -> ResolvedPin {
+        guard let host = hosts.first(where: { $0.id == pin.hostID }) else {
+            return ResolvedPin(pin: pin, host: nil, session: nil, window: nil)
+        }
+        let session = host.store.sessions.first { $0.id == pin.sessionID }
+            ?? host.store.sessions.first { $0.name == pin.sessionName }
+        let window = pin.windowID.flatMap { id in session?.windows.first { $0.id == id } }
+        return ResolvedPin(pin: pin, host: host, session: session, window: window)
+    }
+
+    @ViewBuilder private func pinnedRow(for pin: PinnedItem) -> some View {
+        let resolved = resolve(pin)
+        let target = resolved.target
+        PinnedRow(resolved: resolved, unpin: { model.unpin(pin) })
+            .tag(target)   // iOS native selection (pushes detail on iPhone)
+            .modifier(SelectOnTap { if let target { selection = target } })
+            .contextMenu {
+                Button(pin.windowID == nil ? "Unpin Session" : "Unpin Window") { model.unpin(pin) }
+            }
+            .listRowBackground(sidebarRowBackground(selected: target != nil && selection == target))
+            .modifier(SidebarRowChrome())
     }
 
     /// host id → (session id → attached client count), for drift detection.
@@ -180,6 +219,26 @@ struct SessionTreeView: View {
                 }
             }
         )
+    }
+}
+
+/// The selected window gets a soft theme-accent pill on both platforms;
+/// unselected rows are transparent. On iOS the clear background must be
+/// EXPLICIT — the grouped-list default otherwise paints every row as a
+/// dark rounded card over our themed sidebar background. Replacing the
+/// background changes only the visuals, not List-selection mechanics, so
+/// iPhone detail navigation keeps working. Shared by the host tree and the
+/// Pinned section.
+@ViewBuilder private func sidebarRowBackground(selected: Bool) -> some View {
+    if selected {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(AppTheme.accent.opacity(0.15))
+            .padding(.horizontal, 3)
+            .padding(.vertical, 1)
+    } else {
+        #if os(iOS)
+        Color.clear
+        #endif
     }
 }
 
@@ -414,24 +473,28 @@ private struct HostBody: View {
     var body: some View {
         ForEach(host.store.sessions) { session in
             SessionHeader(host: host, session: session,
+                          isPinned: model.isSessionPinned(hostID: host.id, sessionID: session.id),
+                          togglePin: { model.togglePin(host: host, session: session) },
                           kill: { confirm = killSessionConfirm(session) })
                 .contextMenu { sessionMenu(session) }
-                .listRowBackground(rowBackground(selected: false))
+                .listRowBackground(sidebarRowBackground(selected: false))
                 .modifier(SidebarRowChrome())
             ForEach(session.windows) { window in
                 let windowSelection = WindowSelection(hostID: host.id, windowID: window.id)
                 WindowRow(host: host, window: window,
+                          isPinned: model.isWindowPinned(hostID: host.id, windowID: window.id),
+                          togglePin: { model.togglePin(host: host, session: session, window: window) },
                           kill: { confirm = killWindowConfirm(session, window) })
                     .tag(windowSelection)   // iOS native selection (pushes detail on iPhone)
                     .modifier(SelectOnTap { selection = windowSelection })
                     .contextMenu { windowMenu(session, window) }
-                    .listRowBackground(rowBackground(selected: selection == windowSelection))
+                    .listRowBackground(sidebarRowBackground(selected: selection == windowSelection))
                     .modifier(SidebarRowChrome())
             }
         }
         if host.store.sessions.isEmpty {
             HostStatusRow(host: host)
-                .listRowBackground(rowBackground(selected: false))
+                .listRowBackground(sidebarRowBackground(selected: false))
                 .modifier(SidebarRowChrome())
         }
     }
@@ -450,28 +513,13 @@ private struct HostBody: View {
             confirmLabel: "Kill") { host.client.killWindow(id: window.id) }
     }
 
-    /// The selected window gets a soft theme-accent pill on both platforms;
-    /// unselected rows are transparent. On iOS the clear background must be
-    /// EXPLICIT — the grouped-list default otherwise paints every row as a
-    /// dark rounded card over our themed sidebar background. Replacing the
-    /// background changes only the visuals, not List-selection mechanics, so
-    /// iPhone detail navigation keeps working.
-    @ViewBuilder private func rowBackground(selected: Bool) -> some View {
-        if selected {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(AppTheme.accent.opacity(0.15))
-                .padding(.horizontal, 3)
-                .padding(.vertical, 1)
-        } else {
-            #if os(iOS)
-            Color.clear
-            #endif
-        }
-    }
-
     @ViewBuilder private func sessionMenu(_ session: TmuxSession) -> some View {
         Button("New Window") { host.client.newWindow(inSession: session.id) }
         Button("Rename Session…") { prompt = .renameSession(host: host, session: session) }
+        Button(model.isSessionPinned(hostID: host.id, sessionID: session.id)
+               ? "Unpin Session" : "Pin Session") {
+            model.togglePin(host: host, session: session)
+        }
         Divider()
         Button("Kill Session", role: .destructive) { confirm = killSessionConfirm(session) }
     }
@@ -490,8 +538,173 @@ private struct HostBody: View {
         Divider()
         Button("Rename Window…") { prompt = .renameWindow(host: host, window: window) }
         Button("New Window") { host.client.newWindow(inSession: session.id) }
+        Button(model.isWindowPinned(hostID: host.id, windowID: window.id)
+               ? "Unpin Window" : "Pin Window") {
+            model.togglePin(host: host, session: session, window: window)
+        }
         Divider()
         Button("Kill Window", role: .destructive) { confirm = killWindowConfirm(session, window) }
+    }
+}
+
+/// A pin joined against live tmux state. `session`/`window` are nil while the
+/// pinned thing isn't reachable (host down, session ended, window closed); the
+/// row then renders dimmed from the pin's cached names instead of vanishing,
+/// so pins survive disconnects and tmux-server restarts and re-light when the
+/// target comes back.
+@MainActor
+private struct ResolvedPin {
+    let pin: PinnedItem
+    let host: HostModel?
+    let session: TmuxSession?
+    let window: TmuxWindow?
+
+    /// Live = selectable: the host link is up and the pinned session (and
+    /// window, for window pins) exists right now.
+    var isLive: Bool {
+        guard let host, host.store.status.isLive, session != nil else { return false }
+        return pin.windowID == nil || window != nil
+    }
+
+    /// What selecting the row shows: the pinned window, or the session's
+    /// active window for session pins.
+    var target: WindowSelection? {
+        guard isLive, let host, let session else { return nil }
+        if pin.windowID != nil {
+            guard let window else { return nil }
+            return WindowSelection(hostID: host.id, windowID: window.id)
+        }
+        guard let active = session.windows.first(where: { $0.isActive }) ?? session.windows.first
+        else { return nil }
+        return WindowSelection(hostID: host.id, windowID: active.id)
+    }
+}
+
+/// Header band for the Pinned section — the same full-bleed treatment as
+/// `HostHeader`, so the section anchors the sidebar the way host groups do.
+private struct PinnedSectionHeader: View {
+    var body: some View {
+        HStack(spacing: 9) {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(AppTheme.accent.opacity(0.16))
+                .frame(width: 18, height: 18)
+                .overlay(
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AppTheme.accent)
+                )
+            Text("Pinned")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .textCase(nil)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+        .background(AppTheme.sidebarPanel.padding(.horizontal, -48))
+        .padding(.vertical, 2)
+    }
+}
+
+/// A row in the Pinned section. It appears outside its host grouping, so it
+/// carries its own context line: machine name, session (for window pins), and
+/// the active pane's working directory. Unresolved pins stay in place dimmed —
+/// unpin them here, or leave them to re-resolve when the target returns.
+private struct PinnedRow: View {
+    let resolved: ResolvedPin
+    let unpin: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(resolved.isLive ? AppTheme.accent : Color.secondary)
+                .frame(width: 16, height: 15)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+            // Same trailing-slot swap as WindowRow: badges give way to the
+            // unpin button on hover (iOS unpins via the context menu).
+            ZStack(alignment: .trailing) {
+                if let window = resolved.window {
+                    WindowBadges(window: window)
+                        .opacity(isHovered ? 0 : 1)
+                }
+                HoverIconButton(systemName: "pin.slash",
+                                hint: "Unpin “\(title)”", action: unpin)
+                    .opacity(isHovered ? 1 : 0)
+                    .allowsHitTesting(isHovered)
+            }
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .opacity(resolved.isLive ? 1 : 0.55)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+
+    private var title: String {
+        if resolved.pin.windowID != nil {
+            if let window = resolved.window {
+                return window.name.isEmpty ? "window \(window.index)" : window.name
+            }
+            if let cached = resolved.pin.windowName, !cached.isEmpty { return cached }
+            return "window \(resolved.pin.windowIndex ?? 0)"
+        }
+        return resolved.session?.name ?? resolved.pin.sessionName
+    }
+
+    /// "host · session · ~/path" (window pins) or "host · ~/path" (session
+    /// pins); the path gives way to a why-it's-dimmed note when unresolved.
+    private var subtitle: String {
+        var parts: [String] = [resolved.host?.displayName ?? resolved.pin.hostID]
+        if resolved.pin.windowID != nil {
+            parts.append(resolved.session?.name ?? resolved.pin.sessionName)
+        }
+        if let note = staleNote {
+            parts.append(note)
+        } else if let path = currentPath {
+            parts.append(abbreviatePath(path))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var staleNote: String? {
+        guard let host = resolved.host else { return "host removed" }
+        guard host.store.status.isLive else { return "disconnected" }
+        if resolved.session == nil { return "session ended" }
+        if resolved.pin.windowID != nil && resolved.window == nil { return "window closed" }
+        return nil
+    }
+
+    /// The pinned window's working directory; session pins report their
+    /// active window's.
+    private var currentPath: String? {
+        let window = resolved.window
+            ?? resolved.session.flatMap { s in s.windows.first(where: { $0.isActive }) ?? s.windows.first }
+        guard let path = window?.currentPath, !path.isEmpty else { return nil }
+        return path
+    }
+
+    /// Collapse the common macOS/Linux home prefixes to "~" — we can't know a
+    /// remote host's real home, but keeping the interesting tail of the path
+    /// visible matters more than prefix fidelity in a 250pt sidebar.
+    private func abbreviatePath(_ path: String) -> String {
+        for prefix in ["/Users/", "/home/"] where path.hasPrefix(prefix) {
+            let rest = path.dropFirst(prefix.count)
+            guard let slash = rest.firstIndex(of: "/") else { return "~" }
+            return "~" + rest[slash...]
+        }
+        return path
     }
 }
 
@@ -571,6 +784,8 @@ private struct HostStatusRow: View {
 private struct SessionHeader: View {
     let host: HostModel
     let session: TmuxSession
+    let isPinned: Bool
+    let togglePin: () -> Void
     let kill: () -> Void
     @State private var isHovered = false
 
@@ -581,6 +796,10 @@ private struct SessionHeader: View {
                 .lineLimit(1)
             Spacer(minLength: 0)
             HStack(spacing: 2) {
+                HoverIconButton(systemName: isPinned ? "pin.slash" : "pin",
+                                hint: isPinned ? "Unpin “\(session.name)”"
+                                               : "Pin “\(session.name)” to the top of the sidebar",
+                                action: togglePin)
                 HoverIconButton(systemName: "plus.square.on.square",
                                 hint: "New window in “\(session.name)”") {
                     host.client.newWindow(inSession: session.id)
@@ -602,6 +821,8 @@ private struct SessionHeader: View {
 private struct WindowRow: View {
     let host: HostModel
     let window: TmuxWindow
+    let isPinned: Bool
+    let togglePin: () -> Void
     let kill: () -> Void
     @State private var isHovered = false
 
@@ -632,6 +853,42 @@ private struct WindowRow: View {
 
     private var badges: some View {
         HStack(spacing: 5) {
+            if isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.secondary)
+                    .hoverHint("Pinned to the top of the sidebar")
+            }
+            WindowBadges(window: window)
+        }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 2) {
+            HoverIconButton(systemName: isPinned ? "pin.slash" : "pin",
+                            hint: isPinned ? "Unpin this window"
+                                           : "Pin to the top of the sidebar",
+                            action: togglePin)
+            HoverIconButton(systemName: "rectangle.split.2x1",
+                            hint: "Split left / right") {
+                host.client.splitWindow(id: window.id, horizontal: true)
+            }
+            HoverIconButton(systemName: "rectangle.split.1x2",
+                            hint: "Split top / bottom") {
+                host.client.splitWindow(id: window.id, horizontal: false)
+            }
+            HoverIconButton(systemName: "xmark",
+                            hint: "Kill this window…", action: kill)
+        }
+    }
+}
+
+/// Status badges shared by tree window rows and pinned window rows: the bell,
+/// the Claude state chip, or the unseen-activity dot.
+private struct WindowBadges: View {
+    let window: TmuxWindow
+    var body: some View {
+        HStack(spacing: 5) {
             if window.hasBell {
                 Image(systemName: "bell.fill")
                     .font(.system(size: 9))
@@ -644,21 +901,6 @@ private struct WindowRow: View {
                 Circle().fill(AppTheme.statusWarn).frame(width: 5, height: 5)
                     .hoverHint("Unseen activity")
             }
-        }
-    }
-
-    private var actions: some View {
-        HStack(spacing: 2) {
-            HoverIconButton(systemName: "rectangle.split.2x1",
-                            hint: "Split left / right") {
-                host.client.splitWindow(id: window.id, horizontal: true)
-            }
-            HoverIconButton(systemName: "rectangle.split.1x2",
-                            hint: "Split top / bottom") {
-                host.client.splitWindow(id: window.id, horizontal: false)
-            }
-            HoverIconButton(systemName: "xmark",
-                            hint: "Kill this window…", action: kill)
         }
     }
 }

@@ -12,12 +12,16 @@ final class AppModel {
 
     private(set) var hosts: [HostModel]
 
+    /// Sessions/windows pinned to the top of the sidebar, in pin order.
+    private(set) var pins: [PinnedItem]
+
     /// Terminal font size in points; nil = libghostty's default. Applied to all
     /// session surfaces.
     var fontSize: Double?
 
     init(hosts: [HostModel]) {
         self.hosts = hosts
+        self.pins = PinPersistence.load()
         AppModel.current = self
     }
 
@@ -83,6 +87,51 @@ final class AppModel {
         host.transport.cleanUpOnRemoval()
         hosts.removeAll { $0.id == host.id }
         persist()
+        // The host is gone for good; its pins can never resolve again.
+        if pins.contains(where: { $0.hostID == host.id }) {
+            pins.removeAll { $0.hostID == host.id }
+            PinPersistence.save(pins)
+        }
+    }
+
+    // MARK: Pins
+
+    func isSessionPinned(hostID: String, sessionID: String) -> Bool {
+        pins.contains { $0.hostID == hostID && $0.sessionID == sessionID && $0.windowID == nil }
+    }
+
+    func isWindowPinned(hostID: String, windowID: String) -> Bool {
+        pins.contains { $0.hostID == hostID && $0.windowID == windowID }
+    }
+
+    /// Pin the session (or remove its existing pin). New pins append, so the
+    /// Pinned section keeps the order things were pinned in.
+    func togglePin(host: HostModel, session: TmuxSession) {
+        if isSessionPinned(hostID: host.id, sessionID: session.id) {
+            pins.removeAll { $0.hostID == host.id && $0.sessionID == session.id && $0.windowID == nil }
+        } else {
+            pins.append(PinnedItem(
+                hostID: host.id, sessionID: session.id, windowID: nil,
+                sessionName: session.name, windowName: nil, windowIndex: nil))
+        }
+        PinPersistence.save(pins)
+    }
+
+    /// Pin the window (or remove its existing pin).
+    func togglePin(host: HostModel, session: TmuxSession, window: TmuxWindow) {
+        if isWindowPinned(hostID: host.id, windowID: window.id) {
+            pins.removeAll { $0.hostID == host.id && $0.windowID == window.id }
+        } else {
+            pins.append(PinnedItem(
+                hostID: host.id, sessionID: session.id, windowID: window.id,
+                sessionName: session.name, windowName: window.name, windowIndex: window.index))
+        }
+        PinPersistence.save(pins)
+    }
+
+    func unpin(_ pin: PinnedItem) {
+        pins.removeAll { $0.id == pin.id }
+        PinPersistence.save(pins)
     }
 
     private func persist() {

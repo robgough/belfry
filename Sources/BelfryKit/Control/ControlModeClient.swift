@@ -97,10 +97,13 @@ final class ControlModeClient {
     private static let sessionFormat =
         "SESS #{session_id} #{session_attached} #{session_windows} #{session_name}"
     // `pane_current_command` (active pane) + `@claude_state` (window option set by
-    // Claude Code hooks) drive the per-window Claude status badge. Both are placed
-    // before the greedy window name so parsing stays positional.
+    // Claude Code hooks) drive the per-window Claude status badge;
+    // `pane_current_path` gives pinned rows their working-directory context.
+    // Window fields are TAB-separated (unlike the session line): the path can
+    // contain spaces, so positional space-splitting can't carry both it and the
+    // greedy window name.
     private static let windowFormat =
-        "WIN #{session_id} #{window_id} #{window_index} #{window_active} #{window_activity_flag} #{window_bell_flag} #{pane_current_command} #{@claude_state} #{window_name}"
+        "WIN\t#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity_flag}\t#{window_bell_flag}\t#{pane_current_command}\t#{@claude_state}\t#{pane_current_path}\t#{window_name}"
 
     /// Poll cadence before the server has proven push support (old tmux), and
     /// the slow backstop once `%subscription-changed` notifications flow.
@@ -123,7 +126,8 @@ final class ControlModeClient {
     private static let treeSubscriptionFormat =
         "#{S:#{session_id}#{session_attached}#{session_name}="
         + "#{W:#{window_id}#{window_index}#{window_active}#{window_activity_flag}"
-        + "#{window_bell_flag}#{pane_current_command}#{@claude_state}#{window_name}|}~}"
+        + "#{window_bell_flag}#{pane_current_command}#{@claude_state}"
+        + "#{pane_current_path}#{window_name}|}~}"
 
     @MainActor
     init(store: TmuxStore, channel: any ControlChannel, controlSessionName: String) {
@@ -382,8 +386,8 @@ final class ControlModeClient {
             onLivingSessions?(Set(sessions.map(\.id)))
             ensureDefaultSessionIfEmpty(sessions)
         }
-        if lines.contains(where: { $0.hasPrefix("WIN ") }) {
-            let windows = lines.compactMap { $0.hasPrefix("WIN ") ? Self.parseWindow($0) : nil }
+        if lines.contains(where: { $0.hasPrefix("WIN\t") }) {
+            let windows = lines.compactMap { $0.hasPrefix("WIN\t") ? Self.parseWindow($0) : nil }
             store.applyWindowList(windows)
         }
     }
@@ -459,18 +463,20 @@ final class ControlModeClient {
     }
 
     private static func parseWindow(_ line: String) -> TmuxWindow? {
-        // WIN <sid> <wid> <index> <active> <activity> <bell> <command> <claude_state> <name...>
-        let parts = line.split(separator: " ", maxSplits: 9, omittingEmptySubsequences: false)
-        guard parts.count >= 10 else { return nil }
+        // WIN <sid> <wid> <index> <active> <activity> <bell> <command> <claude_state> <path> <name...>
+        // TAB-separated (see `windowFormat`): the path can contain spaces.
+        let parts = line.split(separator: "\t", maxSplits: 10, omittingEmptySubsequences: false)
+        guard parts.count >= 11 else { return nil }
         return TmuxWindow(
             id: String(parts[2]),
             sessionID: String(parts[1]),
             index: Int(parts[3]) ?? 0,
-            name: String(parts[9]),
+            name: String(parts[10]),
             isActive: parts[4] == "1",
             hasActivity: parts[5] == "1",
             hasBell: parts[6] == "1",
-            claudeState: ClaudeState(command: String(parts[7]), hookState: String(parts[8]))
+            claudeState: ClaudeState(command: String(parts[7]), hookState: String(parts[8])),
+            currentPath: String(parts[9])
         )
     }
 
