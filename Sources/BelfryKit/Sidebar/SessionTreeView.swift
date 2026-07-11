@@ -616,13 +616,22 @@ private struct PinnedRow: View {
     let resolved: ResolvedPin
     let unpin: () -> Void
     @State private var isHovered = false
+    @State private var pinHovered = false
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: "pin.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(resolved.isLive ? AppTheme.accent : Color.secondary)
-                .frame(width: 16, height: 15)
+            // The pin glyph is itself the unpin button (borderless, like
+            // HoverIconButton, so tapping it doesn't select the row).
+            Button(action: unpin) {
+                Image(systemName: pinHovered ? "pin.slash" : "pin.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(resolved.isLive && !pinHovered ? AppTheme.accent : Color.secondary)
+                    .frame(width: 16, height: 15)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .onHover { pinHovered = $0 }
+            .hoverHint("Unpin “\(title)”")
             VStack(alignment: .leading, spacing: 1.5) {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
