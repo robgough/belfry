@@ -629,15 +629,11 @@ private struct PinnedRow: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 if let claudeTitle {
-                    HStack(spacing: 3) {
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 8, weight: .semibold))
-                        Text(claudeTitle)
-                            .lineLimit(1)
-                    }
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(AppTheme.accent)
-                    .hoverHint("Claude Code session “\(claudeTitle)”")
+                    Text(claudeTitle)
+                        .lineLimit(1)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                        .hoverHint("Claude Code session “\(claudeTitle)”")
                 }
                 Text(contextLine)
                     .font(.system(size: 10.5))
