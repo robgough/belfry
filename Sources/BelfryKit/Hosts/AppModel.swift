@@ -12,7 +12,8 @@ final class AppModel {
 
     private(set) var hosts: [HostModel]
 
-    /// Sessions/windows pinned to the top of the sidebar, in pin order.
+    /// Sessions/windows pinned to the top of the sidebar. New pins append;
+    /// the user can rearrange by dragging.
     private(set) var pins: [PinnedItem]
 
     /// Terminal font size in points; nil = libghostty's default. Applied to all
@@ -131,6 +132,12 @@ final class AppModel {
 
     func unpin(_ pin: PinnedItem) {
         pins.removeAll { $0.id == pin.id }
+        PinPersistence.save(pins)
+    }
+
+    /// Reorder the Pinned section (sidebar drag-to-reorder).
+    func movePins(fromOffsets source: IndexSet, toOffset destination: Int) {
+        pins.move(fromOffsets: source, toOffset: destination)
         PinPersistence.save(pins)
     }
 

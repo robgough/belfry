@@ -43,6 +43,8 @@ struct SessionTreeView: View {
     /// The session that owned the last selected window, so a window killed out
     /// from under the selection can hand it to the session's next active window.
     @State private var lastSelectedSession: SessionRef?
+    /// The pin currently being dragged to a new spot (macOS custom reorder).
+    @State private var draggedPinID: String?
 
     private struct SessionRef: Equatable {
         let hostID: String
@@ -111,6 +113,9 @@ struct SessionTreeView: View {
                 ForEach(model.pins) { pin in
                     pinnedRow(for: pin)
                 }
+                .onMove { source, destination in
+                    model.movePins(fromOffsets: source, toOffset: destination)
+                }
             } header: {
                 PinnedSectionHeader()
             }
@@ -145,10 +150,21 @@ struct SessionTreeView: View {
     @ViewBuilder private func pinnedRow(for pin: PinnedItem) -> some View {
         let resolved = resolve(pin)
         let target = resolved.target
+        let index = model.pins.firstIndex(where: { $0.id == pin.id })
         PinnedRow(resolved: resolved, unpin: { model.unpin(pin) })
             .tag(target)   // iOS native selection (pushes detail on iPhone)
             .modifier(SelectOnTap { if let target { selection = target } })
+            .modifier(PinDragReorder(pin: pin, resolved: resolved, draggedPinID: $draggedPinID, model: model))
             .contextMenu {
+                if let index {
+                    Button("Move Up") {
+                        model.movePins(fromOffsets: IndexSet(integer: index), toOffset: index - 1)
+                    }.disabled(index == 0)
+                    Button("Move Down") {
+                        model.movePins(fromOffsets: IndexSet(integer: index), toOffset: index + 2)
+                    }.disabled(index == model.pins.count - 1)
+                    Divider()
+                }
                 Button(pin.windowID == nil ? "Unpin Session" : "Unpin Window") { model.unpin(pin) }
             }
             .listRowBackground(sidebarRowBackground(selected: target != nil && selection == target))
@@ -260,17 +276,86 @@ private struct SidebarRowChrome: ViewModifier {
 /// macOS-only tap-to-select: iOS rows select natively via List(selection:)
 /// (which a collapsed NavigationSplitView needs to push the detail column),
 /// and a competing tap gesture there would swallow the row tap.
+///
+/// Simultaneous (not `.onTapGesture`) because an exclusive tap gesture eats
+/// the mouse-down that starts a `.onMove` row drag (FB7367473), which would
+/// make the Pinned section un-reorderable.
 private struct SelectOnTap: ViewModifier {
     let action: () -> Void
     init(_ action: @escaping () -> Void) { self.action = action }
     func body(content: Content) -> some View {
         #if os(macOS)
-        content.onTapGesture(perform: action)
+        content.simultaneousGesture(TapGesture().onEnded(action))
         #else
         content
         #endif
     }
 }
+
+/// macOS drag-to-reorder for pinned rows. List's built-in `.onMove` never
+/// starts a drag here — row gestures and context menus eat the mouse-down
+/// (FB7367473) — so the rows implement the drag themselves: each is a drag
+/// source and a drop target, and dragging over a row live-moves the dragged
+/// pin into its slot. iOS keeps the native `.onMove` long-press drag instead
+/// (`onDrag` there would fight the context-menu long-press).
+private struct PinDragReorder: ViewModifier {
+    let pin: PinnedItem
+    let resolved: ResolvedPin
+    @Binding var draggedPinID: String?
+    let model: AppModel
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content
+            .onDrag {
+                draggedPinID = pin.id
+                return NSItemProvider(object: pin.id as NSString)
+            } preview: {
+                // Without this, the system preview is the row's text snapshot
+                // floating with no backing, which reads as broken. Solid theme
+                // background — materials blur whatever is behind the drag and
+                // render oddly mid-flight.
+                PinnedRow(resolved: resolved, unpin: {})
+                    .padding(.horizontal, 10)
+                    .frame(width: 230)
+                    .background(AppTheme.sidebarBackground, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
+                    .environment(\.colorScheme, AppTheme.colorScheme)
+            }
+            .onDrop(of: [.text], delegate: PinReorderDropDelegate(
+                pin: pin, draggedPinID: $draggedPinID, model: model))
+        #else
+        content
+        #endif
+    }
+}
+
+#if os(macOS)
+private struct PinReorderDropDelegate: DropDelegate {
+    let pin: PinnedItem
+    @Binding var draggedPinID: String?
+    let model: AppModel
+
+    /// Reorder as the drag passes over each row (live shuffle), so the drop
+    /// itself has nothing left to do.
+    func dropEntered(info: DropInfo) {
+        guard let draggedID = draggedPinID, draggedID != pin.id,
+              let from = model.pins.firstIndex(where: { $0.id == draggedID }),
+              let to = model.pins.firstIndex(where: { $0.id == pin.id })
+        else { return }
+        withAnimation {
+            model.movePins(fromOffsets: IndexSet(integer: from),
+                           toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedPinID = nil
+        return true
+    }
+}
+#endif
 
 /// Whether row/header action buttons show only on pointer hover (macOS) or
 /// always (iOS — nothing hovers on touch).
