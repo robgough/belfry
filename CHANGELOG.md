@@ -2,6 +2,16 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.12] — 2026-07-11
+
+macOS release.
+
+### Added
+
+- **Reorder pinned rows.** Drag a pinned row to a new spot in the Pinned
+  section (the list shuffles live as you drag), or right-click one for
+  Move Up / Move Down. The order persists across restarts.
+
 ## [2026.07.11] — 2026-07-11
 
 macOS release.
