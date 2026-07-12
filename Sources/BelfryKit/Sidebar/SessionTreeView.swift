@@ -766,10 +766,15 @@ private struct PinnedRow: View {
             }
             Spacer(minLength: 0)
             // The leading pin glyph is the unpin control, so the trailing
-            // slot keeps the status badges full-time. .fixedSize stops the
-            // greedy multi-line text column from compressing the badge off the
-            // row's trailing edge; iOS renders it icon-only so it always fits.
-            if let window = resolved.window {
+            // slot keeps the status badges full-time. Key off `contextWindow`,
+            // not `resolved.window`: session pins have no window of their own,
+            // so `resolved.window` is nil and their badge silently vanished —
+            // even though the Claude *title* line above (also `contextWindow`)
+            // still showed. Now both track the session's active window together.
+            // .fixedSize stops the greedy multi-line text column from
+            // compressing the badge off the row's trailing edge; iOS renders it
+            // icon-only so it always fits.
+            if let window = contextWindow {
                 WindowBadges(window: window, compact: badgesCompact)
                     .fixedSize()
             }
