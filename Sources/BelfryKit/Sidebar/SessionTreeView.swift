@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreText
 
 /// `.help()` tooltips exist on macOS only; elsewhere this is a no-op.
 extension View {
@@ -1094,10 +1095,14 @@ struct ClaudeBadge: View {
     /// Claude Code session name (from `@claude_title`), appended to the
     /// tooltip when known; "" hides it.
     var title: String = ""
-    /// Icon-only: drop the status word and tighten the capsule, for rows too
-    /// narrow to fit "Working"/"Waiting" (iOS pinned items). The glyph, color
-    /// and tooltip are unchanged, so the state still reads at a glance.
+    /// Icon-only: drop the status word *and* the capsule, and show a larger
+    /// glyph on its own — for rows too narrow to fit "Working"/"Waiting" (iOS
+    /// pinned items). The glyph, color and tooltip are unchanged, so the state
+    /// still reads at a glance.
     var compact = false
+    /// A touch larger when it stands alone (compact), where there's no word or
+    /// capsule to carry the state; the labelled chip keeps the text-matched size.
+    private var glyphPointSize: CGFloat { compact ? 14 : 10 }
     var body: some View {
         switch state {
         case .none:
@@ -1110,12 +1115,12 @@ struct ClaudeBadge: View {
         case .working:
             chip(text: "Working", color: .accentColor, weight: .medium,
                  help: "Claude is working") {
-                BrailleSpinner(color: .accentColor)
+                BrailleSpinner(color: .accentColor, pointSize: glyphPointSize)
             }
         case .background:
             chip(text: "Agents", color: .purple, weight: .medium,
                  help: "Claude's turn ended, but background tasks or agents are still running — it will resume on its own") {
-                BrailleSpinner(color: .purple)
+                BrailleSpinner(color: .purple, pointSize: glyphPointSize)
             }
         case .idle:
             chip(text: "Idle", color: AppTheme.statusGood, weight: .regular,
@@ -1125,7 +1130,8 @@ struct ClaudeBadge: View {
         case .waiting:
             chip(text: "Waiting", color: .orange, weight: .semibold,
                  help: "Claude is waiting for your input") {
-                PulsingIcon(systemName: "questionmark.circle.fill", color: .orange)
+                PulsingIcon(systemName: "questionmark.circle.fill", color: .orange,
+                            pointSize: glyphPointSize)
             }
         }
     }
@@ -1138,11 +1144,16 @@ struct ClaudeBadge: View {
             glyph()
             if !compact { Text(text) }
         }
-        .font(.system(size: 10, weight: weight))
+        .font(.system(size: glyphPointSize, weight: weight))
         .foregroundStyle(color)
-        .padding(.horizontal, compact ? 3 : 5)
-        .padding(.vertical, 1.5)
-        .background(Capsule().fill(color.opacity(0.14)))
+        .padding(.horizontal, compact ? 0 : 5)
+        .padding(.vertical, compact ? 0 : 1.5)
+        .background {
+            // Icon-only badges stand alone; only the labelled chip gets a capsule.
+            if !compact {
+                Capsule().fill(color.opacity(0.14))
+            }
+        }
         .hoverHint(title.isEmpty ? help : "\(help) — session “\(title)”")
     }
 }
@@ -1168,21 +1179,25 @@ private func makePulseAnimation() -> CABasicAnimation {
 private struct PulsingIcon: NSViewRepresentable {
     let systemName: String
     let color: Color
+    var pointSize: CGFloat = 10
 
-    func makeNSView(context: Context) -> IconView { IconView(systemName: systemName, color: NSColor(color)) }
+    func makeNSView(context: Context) -> IconView {
+        IconView(systemName: systemName, color: NSColor(color), pointSize: pointSize)
+    }
     func updateNSView(_ nsView: IconView, context: Context) {}
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: IconView, context: Context) -> CGSize? {
-        IconView.iconSize
+        nsView.intrinsicContentSize
     }
 
     final class IconView: NSView {
-        static let iconSize = NSSize(width: 12, height: 12)
+        private let iconSize: NSSize
         private let imageView = NSImageView()
 
-        init(systemName: String, color: NSColor) {
-            super.init(frame: NSRect(origin: .zero, size: Self.iconSize))
+        init(systemName: String, color: NSColor, pointSize: CGFloat) {
+            iconSize = NSSize(width: pointSize + 2, height: pointSize + 2)
+            super.init(frame: NSRect(origin: .zero, size: iconSize))
             wantsLayer = true
-            let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
                 .applying(.init(paletteColors: [color]))
             imageView.image = NSImage(systemSymbolName: systemName, accessibilityDescription: nil)?
                 .withSymbolConfiguration(config)
@@ -1195,7 +1210,7 @@ private struct PulsingIcon: NSViewRepresentable {
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        override var intrinsicContentSize: NSSize { Self.iconSize }
+        override var intrinsicContentSize: NSSize { iconSize }
 
         // CA strips animations from a layer that leaves the hierarchy, so
         // (re)install whenever we land in a window.
@@ -1218,22 +1233,27 @@ private struct PulsingIcon: NSViewRepresentable {
 /// work, and macOS pauses it automatically when the window isn't visible.
 private struct BrailleSpinner: NSViewRepresentable {
     let color: Color
+    var pointSize: CGFloat = 10
 
-    func makeNSView(context: Context) -> SpinnerView { SpinnerView(color: NSColor(color)) }
+    func makeNSView(context: Context) -> SpinnerView { SpinnerView(color: NSColor(color), pointSize: pointSize) }
     func updateNSView(_ nsView: SpinnerView, context: Context) {}
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SpinnerView, context: Context) -> CGSize? {
-        SpinnerView.glyphSize
+        nsView.intrinsicContentSize
     }
 
     final class SpinnerView: NSView {
         private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         private static let frameInterval = 0.125
-        static let glyphSize = NSSize(width: 8, height: 12)
+        static func glyphSize(for pointSize: CGFloat) -> NSSize {
+            NSSize(width: pointSize * 0.8, height: pointSize * 1.2)
+        }
+        private let glyphSize: NSSize
         private let images: [CGImage]
 
-        init(color: NSColor) {
-            images = Self.renderFrames(color: color)
-            super.init(frame: NSRect(origin: .zero, size: Self.glyphSize))
+        init(color: NSColor, pointSize: CGFloat) {
+            glyphSize = Self.glyphSize(for: pointSize)
+            images = Self.renderFrames(color: color, pointSize: pointSize)
+            super.init(frame: NSRect(origin: .zero, size: glyphSize))
             wantsLayer = true
             setContentHuggingPriority(.required, for: .horizontal)
             setContentHuggingPriority(.required, for: .vertical)
@@ -1242,7 +1262,7 @@ private struct BrailleSpinner: NSViewRepresentable {
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        override var intrinsicContentSize: NSSize { Self.glyphSize }
+        override var intrinsicContentSize: NSSize { glyphSize }
 
         // CA strips animations from a layer that leaves the hierarchy, so
         // (re)install whenever we land in a window.
@@ -1260,11 +1280,12 @@ private struct BrailleSpinner: NSViewRepresentable {
         }
 
         /// Draw each braille frame once into a 2x bitmap tinted `color`.
-        private static func renderFrames(color: NSColor) -> [CGImage] {
+        private static func renderFrames(color: NSColor, pointSize: CGFloat) -> [CGImage] {
             let scale: CGFloat = 2
-            let size = NSSize(width: glyphSize.width * scale, height: glyphSize.height * scale)
+            let glyph = glyphSize(for: pointSize)
+            let size = NSSize(width: glyph.width * scale, height: glyph.height * scale)
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: 10 * scale, weight: .regular),
+                .font: NSFont.monospacedSystemFont(ofSize: pointSize * scale, weight: .regular),
                 .foregroundColor: color,
             ]
             return frames.compactMap { glyph in
@@ -1289,20 +1310,24 @@ private struct BrailleSpinner: NSViewRepresentable {
 private struct PulsingIcon: UIViewRepresentable {
     let systemName: String
     let color: Color
+    var pointSize: CGFloat = 10
 
-    func makeUIView(context: Context) -> IconView { IconView(systemName: systemName, color: UIColor(color)) }
+    func makeUIView(context: Context) -> IconView {
+        IconView(systemName: systemName, color: UIColor(color), pointSize: pointSize)
+    }
     func updateUIView(_ uiView: IconView, context: Context) {}
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: IconView, context: Context) -> CGSize? {
-        IconView.iconSize
+        uiView.intrinsicContentSize
     }
 
     final class IconView: UIView {
-        static let iconSize = CGSize(width: 12, height: 12)
+        private let iconSize: CGSize
         private let imageView = UIImageView()
 
-        init(systemName: String, color: UIColor) {
-            super.init(frame: CGRect(origin: .zero, size: Self.iconSize))
-            let config = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+        init(systemName: String, color: UIColor, pointSize: CGFloat) {
+            iconSize = CGSize(width: pointSize + 2, height: pointSize + 2)
+            super.init(frame: CGRect(origin: .zero, size: iconSize))
+            let config = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
             imageView.image = UIImage(systemName: systemName, withConfiguration: config)
             imageView.tintColor = color
             imageView.contentMode = .scaleAspectFit
@@ -1314,7 +1339,7 @@ private struct PulsingIcon: UIViewRepresentable {
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        override var intrinsicContentSize: CGSize { Self.iconSize }
+        override var intrinsicContentSize: CGSize { iconSize }
 
         // CA strips animations from a layer that leaves the hierarchy, so
         // (re)install whenever we land in a window.
@@ -1331,28 +1356,33 @@ private struct PulsingIcon: UIViewRepresentable {
 /// iOS twin of the macOS BrailleSpinner (see that doc comment for the why).
 private struct BrailleSpinner: UIViewRepresentable {
     let color: Color
+    var pointSize: CGFloat = 10
 
-    func makeUIView(context: Context) -> SpinnerView { SpinnerView(color: UIColor(color)) }
+    func makeUIView(context: Context) -> SpinnerView { SpinnerView(color: UIColor(color), pointSize: pointSize) }
     func updateUIView(_ uiView: SpinnerView, context: Context) {}
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: SpinnerView, context: Context) -> CGSize? {
-        SpinnerView.glyphSize
+        uiView.intrinsicContentSize
     }
 
     final class SpinnerView: UIView {
         private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         private static let frameInterval = 0.125
-        static let glyphSize = CGSize(width: 8, height: 12)
+        static func glyphSize(for pointSize: CGFloat) -> CGSize {
+            CGSize(width: pointSize * 0.8, height: pointSize * 1.2)
+        }
+        private let glyphSize: CGSize
         private let images: [CGImage]
 
-        init(color: UIColor) {
-            images = Self.renderFrames(color: color)
-            super.init(frame: CGRect(origin: .zero, size: Self.glyphSize))
+        init(color: UIColor, pointSize: CGFloat) {
+            glyphSize = Self.glyphSize(for: pointSize)
+            images = Self.renderFrames(color: color, pointSize: pointSize)
+            super.init(frame: CGRect(origin: .zero, size: glyphSize))
         }
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        override var intrinsicContentSize: CGSize { Self.glyphSize }
+        override var intrinsicContentSize: CGSize { glyphSize }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -1368,20 +1398,47 @@ private struct BrailleSpinner: UIViewRepresentable {
         }
 
         /// Draw each braille frame once into a 2x bitmap tinted `color`.
-        private static func renderFrames(color: UIColor) -> [CGImage] {
+        private static func renderFrames(color: UIColor, pointSize: CGFloat) -> [CGImage] {
             let scale: CGFloat = 2
-            let size = CGSize(width: glyphSize.width * scale, height: glyphSize.height * scale)
-            let font = UIFont.monospacedSystemFont(ofSize: 10 * scale, weight: .regular)
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = 1
-            format.opaque = false
-            let renderer = UIGraphicsImageRenderer(size: size, format: format)
+            let glyph = glyphSize(for: pointSize)
+            let size = CGSize(width: glyph.width * scale, height: glyph.height * scale)
+            let font = UIFont.monospacedSystemFont(ofSize: pointSize * scale, weight: .regular)
+            // Font only; the color comes from the context fill at draw time
+            // (CTLineDraw ignores `.foregroundColor`).
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
+            ]
+
+            // Center the braille *cell* in the bitmap by placing the baseline
+            // explicitly. NSString.draw(at:) anchors the top of the line box,
+            // leaving the short, high-sitting braille ink clinging to a corner.
+            // Take the fully-lit glyph's ink mid-point (constant across frames)
+            // as the cell centre and put the baseline so it lands at the bitmap's
+            // middle; every frame then draws into the same centred cell.
+            //
+            // Draw straight into a CGContext (not UIGraphicsImageRenderer, whose
+            // context is pre-flipped for UIKit and fights CTLineDraw): its native
+            // y-up space matches Core Text, so textPosition is y-up from the
+            // bottom and the glyph comes out upright.
+            let cellInk = CTLineGetImageBounds(
+                CTLineCreateWithAttributedString(NSAttributedString(string: "⣿", attributes: attributes)),
+                nil)
+            let textPosition = CGPoint(x: size.width / 2 - cellInk.midX,
+                                       y: size.height / 2 - cellInk.midY)
+
             return frames.compactMap { glyph in
-                renderer.image { _ in
-                    (glyph as NSString).draw(
-                        at: .zero,
-                        withAttributes: [.font: font, .foregroundColor: color])
-                }.cgImage
+                guard let ctx = CGContext(
+                    data: nil, width: Int(size.width), height: Int(size.height),
+                    bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                ctx.setFillColor(color.cgColor)
+                ctx.textPosition = textPosition
+                CTLineDraw(
+                    CTLineCreateWithAttributedString(
+                        NSAttributedString(string: glyph, attributes: attributes)),
+                    ctx)
+                return ctx.makeImage()
             }
         }
     }
