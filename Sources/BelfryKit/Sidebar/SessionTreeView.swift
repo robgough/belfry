@@ -71,11 +71,15 @@ struct SessionTreeView: View {
         .environment(\.defaultMinListRowHeight, Self.minRowHeight)
         // tmux is authoritative for the active window: switching windows with
         // tmux keys (prefix-n, status-bar clicks) moves the active flag on the
-        // next store refresh, and the sidebar selection follows instead of
-        // going stale. User clicks are safe: a click changes `selection`, not
-        // `followTarget`, and the two converge once tmux confirms the switch.
-        .onChange(of: followTarget) { _, target in
-            guard let target, target != selection else { return }
+        // next store refresh, and the sidebar selection follows instead of going
+        // stale. But only follow when the user was actually *on* the previously
+        // active window (`selection == oldTarget`) — i.e. tracking it. Selecting
+        // a window in another session recomputes `followTarget` to that session's
+        // active window as a side effect; without this guard that immediately
+        // snapped the selection to the active window, making non-active (and
+        // pinned) windows impossible to open. tmux converges via select-window.
+        .onChange(of: followTarget) { oldTarget, target in
+            guard let target, target != selection, selection == oldTarget else { return }
             selection = target
         }
         .onChange(of: selection, initial: true) { _, sel in
