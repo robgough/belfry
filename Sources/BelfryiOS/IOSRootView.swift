@@ -31,14 +31,26 @@ struct IOSRootView: View {
                 .navigationTitle("Belfry")
                 .toolbar {
                     if horizontalSizeClass == .regular {
-                        ToolbarItem(placement: .primaryAction) { sidebarLayoutMenu }
+                        ToolbarItem(placement: .primaryAction) { optionsMenu }
                     }
                     ToolbarItem(placement: .primaryAction) { addMenu }
                 }
         } detail: {
             TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize)
                 .background(AppTheme.windowBackground)
+                // Without this the detail column defaults to a large-title bar
+                // with an empty title, reserving a tall empty band above the
+                // terminal. Inline collapses the bar to a single row.
+                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    // Same iTunes-style "now playing" readout as the Mac's title
+                    // bar (shared BelfryKit view); renders nothing until a window
+                    // resolves, so an empty detail keeps a bare nav bar. Sized up
+                    // on iPad (regular width), where there's room for it.
+                    ToolbarItem(placement: .principal) {
+                        NowPlayingView(hosts: model.hosts, selection: selection,
+                                       prominent: horizontalSizeClass == .regular)
+                    }
                     if selectedWorkspace != nil {
                         ToolbarItem(placement: .primaryAction) {
                             Button {
@@ -97,16 +109,20 @@ struct IOSRootView: View {
         return host.surfaceStore.workspace(for: session.id)
     }
 
-    /// iPad-only control to dock or overlay the sidebar. A Picker inside the
-    /// menu shows both choices with the current one checked.
-    private var sidebarLayoutMenu: some View {
+    /// iPad-only options menu. Distinct from the split view's built-in sidebar
+    /// show/hide toggle (an `ellipsis` glyph, not another sidebar icon), it hosts
+    /// low-frequency preferences — currently just dock-vs-overlay, with room to
+    /// grow (font size, etc.). The Picker shows both choices with one checked.
+    private var optionsMenu: some View {
         Menu {
-            Picker("Sidebar", selection: $sidebarLayout) {
-                Text("Keep Sidebar Open").tag(SidebarLayout.keepOpen)
-                Text("Overlay Sidebar").tag(SidebarLayout.overlay)
+            Section("Sidebar") {
+                Picker("Sidebar", selection: $sidebarLayout) {
+                    Text("Keep Sidebar Open").tag(SidebarLayout.keepOpen)
+                    Text("Overlay Sidebar").tag(SidebarLayout.overlay)
+                }
             }
         } label: {
-            Image(systemName: "sidebar.left")
+            Image(systemName: "ellipsis.circle")
         }
     }
 

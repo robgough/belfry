@@ -1,5 +1,7 @@
 .build/
 .swiftpm/
+# Local Claude Code tooling state (worktrees, scratch — not project source)
+.claude/
 *.xcodeproj/xcuserdata/
 .DS_Store
 # Assembled app bundle (build product of scripts/make_app.sh)

@@ -384,16 +384,36 @@ extension BelfrySSHWorkspace: TerminalViewDelegate {
 }
 
 /// Mounts the workspace's persistent SwiftTerm view into SwiftUI.
+///
+/// The terminal is a single long-lived UIView owned by the workspace, not by
+/// this representable. Handing it to SwiftUI directly worked while the layout
+/// was fixed, but toggling the iPad's `navigationSplitViewStyle` at runtime
+/// rebuilds the detail column: SwiftUI tears down the old representable and the
+/// shared view is left orphaned (blank terminal until relaunch). So we vend a
+/// throwaway container SwiftUI *can* own, and re-parent the persistent terminal
+/// into whichever container is currently live — the terminal survives the
+/// rebuild instead of vanishing.
 private struct SwiftTermSurface: UIViewRepresentable {
     let terminalView: SwiftTerm.TerminalView
     let fontSize: Double?
 
-    func makeUIView(context: Context) -> SwiftTerm.TerminalView { terminalView }
+    func makeUIView(context: Context) -> UIView { UIView() }
 
-    func updateUIView(_ uiView: SwiftTerm.TerminalView, context: Context) {
+    func updateUIView(_ container: UIView, context: Context) {
+        if terminalView.superview !== container {
+            // Moving to a new superview drops the old constraints automatically.
+            terminalView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(terminalView)
+            NSLayoutConstraint.activate([
+                terminalView.topAnchor.constraint(equalTo: container.topAnchor),
+                terminalView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                terminalView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                terminalView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            ])
+        }
         let size = CGFloat(fontSize ?? 13)
-        if uiView.font.pointSize != size {
-            uiView.font = BelfrySSHWorkspace.terminalFont(size: size)
+        if terminalView.font.pointSize != size {
+            terminalView.font = BelfrySSHWorkspace.terminalFont(size: size)
         }
     }
 }

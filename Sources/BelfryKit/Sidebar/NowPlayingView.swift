@@ -14,6 +14,9 @@ import SwiftUI
 struct NowPlayingView: View {
     let hosts: [HostModel]
     let selection: WindowSelection?
+    /// Larger type and a wider minimum, for the roomier iPad toolbar. The Mac
+    /// and iPhone use the compact default.
+    var prominent: Bool = false
 
     var body: some View {
         if let current = resolved {
@@ -42,12 +45,12 @@ struct NowPlayingView: View {
         HStack(spacing: 8) {
             VStack(spacing: 1) {
                 Text(primaryLine(for: current))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: prominent ? 15 : 12, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(secondaryLine(for: current))
-                    .font(.system(size: 10))
+                    .font(.system(size: prominent ? 12 : 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -56,8 +59,8 @@ struct NowPlayingView: View {
                 ClaudeBadge(state: window.claudeState, title: window.claudeTitle)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 3)
+        .padding(.horizontal, prominent ? 16 : 12)
+        .padding(.vertical, prominent ? 5 : 3)
         // The LCD: slightly inset against the toolbar material, same rounded
         // panel treatment as the sidebar's host bands and chips.
         .background(
@@ -68,7 +71,7 @@ struct NowPlayingView: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(.quaternary, lineWidth: 1)
         )
-        .frame(minWidth: 160, maxWidth: 460)
+        .frame(minWidth: prominent ? 240 : 160, maxWidth: 460)
         .fixedSize(horizontal: false, vertical: true)
         .hoverHint(hint(for: current))
         .accessibilityElement(children: .combine)
