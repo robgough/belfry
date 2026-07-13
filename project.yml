@@ -38,6 +38,14 @@ targets:
         product: TerminiSSH
       - package: SwiftTerm
         product: SwiftTerm
+    preBuildScripts:
+      # Guard against a stale generated project: fail the build (with a clear
+      # message) if a Swift file was added/renamed under the target's source
+      # dirs without re-running `xcodegen generate`. Otherwise the missing file
+      # surfaces as a confusing "Cannot find type X in scope" error.
+      - name: Check project is in sync with sources
+        script: '"$SRCROOT/scripts/check-project-sync.sh"'
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_NAME: Belfry
