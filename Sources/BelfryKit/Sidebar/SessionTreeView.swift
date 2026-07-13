@@ -773,10 +773,9 @@ private struct PinnedRow: View {
             // even though the Claude *title* line above (also `contextWindow`)
             // still showed. Now both track the session's active window together.
             // .fixedSize stops the greedy multi-line text column from
-            // compressing the badge off the row's trailing edge; iOS renders it
-            // icon-only so it always fits.
+            // compressing the icon-only badge off the row's trailing edge.
             if let window = contextWindow {
-                WindowBadges(window: window, compact: badgesCompact)
+                WindowBadges(window: window)
                     .fixedSize()
             }
         }
@@ -840,17 +839,6 @@ private struct PinnedRow: View {
     private var contextWindow: TmuxWindow? {
         resolved.window
             ?? resolved.session.flatMap { s in s.windows.first(where: { $0.isActive }) ?? s.windows.first }
-    }
-
-    /// iOS pinned rows are taller and their text columns greedier, so the full
-    /// glyph-plus-word Claude chip got squeezed off the trailing edge — show it
-    /// icon-only there. The Mac has room for the labelled chip.
-    private var badgesCompact: Bool {
-        #if os(iOS)
-        true
-        #else
-        false
-        #endif
     }
 
     /// The context window's working directory ("" from tmux means unknown).
@@ -1039,9 +1027,6 @@ private struct WindowRow: View {
 /// the Claude state chip, or the unseen-activity dot.
 private struct WindowBadges: View {
     let window: TmuxWindow
-    /// Forwarded to the Claude chip: icon-only where the row is too narrow for
-    /// the status word (iOS pinned rows).
-    var compact = false
     var body: some View {
         HStack(spacing: 5) {
             if window.hasBell {
@@ -1051,7 +1036,7 @@ private struct WindowBadges: View {
                     .hoverHint("Bell rang in this window")
             }
             if window.claudeState != .none {
-                ClaudeBadge(state: window.claudeState, title: window.claudeTitle, compact: compact)
+                ClaudeBadge(state: window.claudeState, title: window.claudeTitle)
             } else if window.hasActivity {
                 Circle().fill(AppTheme.statusWarn).frame(width: 5, height: 5)
                     .hoverHint("Unseen activity")
@@ -1080,81 +1065,56 @@ private struct WindowIndexChip: View {
     }
 }
 
-/// Per-window Claude Code status chip: an indicator plus a word, so states are legible
-/// at a glance. `.working` shows a braille "processing" spinner; `.background` (Claude's
-/// turn ended but background tasks/agents are still running) pulses purple as "Agents";
-/// `.idle` is a calm green check — the turn is over, nothing pending; `.waiting` is an
-/// amber question mark — Claude is actively waiting for your input (e.g. a permission
-/// prompt), the only state that pulses and badges the Dock.
+/// The full braille cell; the still/pulsing states light every dot.
+private let brailleFullCell = "⣿"
+/// The spinner: a hole orbiting the full 4-row cell clockwise.
+private let brailleSpinnerFrames = ["⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽", "⣾"]
+
+/// Per-window Claude Code status glyph. A single braille visual language, keyed
+/// by colour and motion: `.working` an accent spinner (hole orbiting the cell);
+/// `.background` the same spinner in purple (Claude's turn ended but background
+/// tasks/agents are still running); `.idle` a still green cell — nothing pending;
+/// `.waiting` a pulsing orange cell — Claude is actively waiting for your input
+/// (e.g. a permission prompt), the state that also badges the Dock; `.running` a
+/// still grey cell (status hooks not installed, so live state is unknown).
 ///
-/// Internal (not file-private): the toolbar's now-playing readout
-/// (`NowPlayingView`) reuses the same chip so Claude status looks identical
-/// everywhere in the chrome.
+/// Icon-only, no capsule or word: the glyph stands on its own everywhere — the
+/// sidebar rows and the toolbar's now-playing readout (`NowPlayingView`) alike.
+///
+/// Internal (not file-private) so `NowPlayingView` can reuse it.
 struct ClaudeBadge: View {
     let state: ClaudeState
     /// Claude Code session name (from `@claude_title`), appended to the
     /// tooltip when known; "" hides it.
     var title: String = ""
-    /// Icon-only: drop the status word *and* the capsule, and show a larger
-    /// glyph on its own — for rows too narrow to fit "Working"/"Waiting" (iOS
-    /// pinned items). The glyph, color and tooltip are unchanged, so the state
-    /// still reads at a glance.
-    var compact = false
-    /// A touch larger when it stands alone (compact), where there's no word or
-    /// capsule to carry the state; the labelled chip keeps the text-matched size.
-    private var glyphPointSize: CGFloat { compact ? 14 : 10 }
+    private let glyphPointSize: CGFloat = 14
     var body: some View {
         switch state {
         case .none:
             EmptyView()
         case .running:
-            chip(text: "Claude", color: .secondary, weight: .regular,
-                 help: "Claude is running here — install status hooks for live Working / Idle / Waiting status") {
-                Image(systemName: "sparkle")
-            }
+            cell(.secondary, glyphs: [brailleFullCell],
+                 tip: "Claude is running here — install status hooks for live Working / Idle / Waiting status")
         case .working:
-            chip(text: "Working", color: .accentColor, weight: .medium,
-                 help: "Claude is working") {
-                BrailleSpinner(color: .accentColor, pointSize: glyphPointSize)
-            }
+            cell(.accentColor, glyphs: brailleSpinnerFrames, tip: "Claude is working")
         case .background:
-            chip(text: "Agents", color: .purple, weight: .medium,
-                 help: "Claude's turn ended, but background tasks or agents are still running — it will resume on its own") {
-                BrailleSpinner(color: .purple, pointSize: glyphPointSize)
-            }
+            cell(.purple, glyphs: brailleSpinnerFrames,
+                 tip: "Claude's turn ended, but background tasks or agents are still running — it will resume on its own")
         case .idle:
-            chip(text: "Idle", color: AppTheme.statusGood, weight: .regular,
-                 help: "Claude finished its turn — nothing pending") {
-                Image(systemName: "checkmark.circle")
-            }
+            cell(AppTheme.statusGood, glyphs: [brailleFullCell],
+                 tip: "Claude finished its turn — nothing pending")
         case .waiting:
-            chip(text: "Waiting", color: .orange, weight: .semibold,
-                 help: "Claude is waiting for your input") {
-                PulsingIcon(systemName: "questionmark.circle.fill", color: .orange,
-                            pointSize: glyphPointSize)
-            }
+            cell(.orange, glyphs: [brailleFullCell], pulses: true,
+                 tip: "Claude is waiting for your input")
         }
     }
 
-    private func chip<Glyph: View>(
-        text: String, color: Color, weight: Font.Weight, help: String,
-        @ViewBuilder glyph: () -> Glyph
-    ) -> some View {
-        HStack(spacing: 3) {
-            glyph()
-            if !compact { Text(text) }
-        }
-        .font(.system(size: glyphPointSize, weight: weight))
-        .foregroundStyle(color)
-        .padding(.horizontal, compact ? 0 : 5)
-        .padding(.vertical, compact ? 0 : 1.5)
-        .background {
-            // Icon-only badges stand alone; only the labelled chip gets a capsule.
-            if !compact {
-                Capsule().fill(color.opacity(0.14))
-            }
-        }
-        .hoverHint(title.isEmpty ? help : "\(help) — session “\(title)”")
+    /// A braille badge — a static cell, a pulsing cell, or (with >1 glyph) the
+    /// cycling spinner — tinted and tooltipped. The view carries its own colour
+    /// and size, so no font/foregroundStyle is needed here.
+    private func cell(_ color: Color, glyphs: [String], pulses: Bool = false, tip: String) -> some View {
+        BrailleBadge(color: color, pointSize: glyphPointSize, glyphs: glyphs, pulses: pulses)
+            .hoverHint(title.isEmpty ? tip : "\(tip) — session “\(title)”")
     }
 }
 
@@ -1170,93 +1130,102 @@ private func makePulseAnimation() -> CABasicAnimation {
     return animation
 }
 
-#if canImport(AppKit)
+/// Weakly-bound `CAAnimation` delegate. Core Animation removes a layer's
+/// animations on plenty of occasions the view never gets a lifecycle callback
+/// for — cell recycling inside a List, a snapshot for the app switcher, a
+/// transaction that rebuilds the render tree — leaving the spinner frozen on its
+/// last frame with nothing to reinstall it. `animationDidStop` fires whenever the
+/// loop is pulled, so the view can restart it. The closure captures the view
+/// weakly: the layer → animation → delegate chain must not retain-cycle it.
+private final class AnimationRestarter: NSObject, CAAnimationDelegate {
+    private let onStop: () -> Void
+    init(_ onStop: @escaping () -> Void) { self.onStop = onStop }
+    func animationDidStop(_ anim: CAAnimation, finished: Bool) { onStop() }
+}
 
-/// A pulsing SF Symbol, animated for free. `.symbolEffect(.pulse, .repeating)`
-/// is frame-driven in-process like every per-frame SwiftUI update (measured
-/// ~17% CPU for one badge); a `CABasicAnimation` on layer opacity runs
-/// entirely in the render server instead.
-private struct PulsingIcon: NSViewRepresentable {
-    let systemName: String
-    let color: Color
-    var pointSize: CGFloat = 10
-
-    func makeNSView(context: Context) -> IconView {
-        IconView(systemName: systemName, color: NSColor(color), pointSize: pointSize)
-    }
-    func updateNSView(_ nsView: IconView, context: Context) {}
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: IconView, context: Context) -> CGSize? {
-        nsView.intrinsicContentSize
-    }
-
-    final class IconView: NSView {
-        private let iconSize: NSSize
-        private let imageView = NSImageView()
-
-        init(systemName: String, color: NSColor, pointSize: CGFloat) {
-            iconSize = NSSize(width: pointSize + 2, height: pointSize + 2)
-            super.init(frame: NSRect(origin: .zero, size: iconSize))
-            wantsLayer = true
-            let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
-                .applying(.init(paletteColors: [color]))
-            imageView.image = NSImage(systemSymbolName: systemName, accessibilityDescription: nil)?
-                .withSymbolConfiguration(config)
-            imageView.frame = bounds
-            imageView.autoresizingMask = [.width, .height]
-            imageView.wantsLayer = true
-            addSubview(imageView)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-        override var intrinsicContentSize: NSSize { iconSize }
-
-        // CA strips animations from a layer that leaves the hierarchy, so
-        // (re)install whenever we land in a window.
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard window != nil, let layer = imageView.layer else { return }
-            guard layer.animation(forKey: "belfry.pulse") == nil else { return }
-            layer.add(makePulseAnimation(), forKey: "belfry.pulse")
-        }
+/// Render braille `glyphs` to tinted bitmaps of `pixelSize`, each centred in the
+/// cell. Pure Core Graphics / Core Text, shared by both platforms: draw straight
+/// into a CGContext (native y-up, matching Core Text) and place the baseline from
+/// the full cell's ink mid-point, so the glyph is upright and centred — the same
+/// approach the PNG-verified spinner used. `font` is the platform monospaced
+/// system font, passed via the `.font` attribute (CTLine ignores `.foregroundColor`,
+/// hence the context fill + `kCTForegroundColorFromContextAttributeName`).
+private func renderBrailleImages(_ glyphs: [String], font: Any, cgColor: CGColor,
+                                 pixelSize: CGSize) -> [CGImage] {
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: font,
+        NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
+    ]
+    let cellInk = CTLineGetImageBounds(
+        CTLineCreateWithAttributedString(NSAttributedString(string: brailleFullCell, attributes: attributes)),
+        nil)
+    let textPosition = CGPoint(x: pixelSize.width / 2 - cellInk.midX,
+                               y: pixelSize.height / 2 - cellInk.midY)
+    return glyphs.compactMap { glyph in
+        guard let ctx = CGContext(
+            data: nil, width: Int(pixelSize.width), height: Int(pixelSize.height),
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setFillColor(cgColor)
+        ctx.textPosition = textPosition
+        CTLineDraw(
+            CTLineCreateWithAttributedString(NSAttributedString(string: glyph, attributes: attributes)),
+            ctx)
+        return ctx.makeImage()
     }
 }
 
-/// The classic braille "processing" spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏), animated for free.
-///
-/// Anything that updates SwiftUI state per frame (TimelineView Text swaps,
-/// SF Symbol effects) re-renders the sidebar row 8–30×/sec and measured
-/// 7–17% CPU while a single badge was visible. Here the ten frames are
-/// rendered to images once and cycled by a `CAKeyframeAnimation` on a layer's
-/// `contents` — the window server runs the loop, the app does zero per-frame
-/// work, and macOS pauses it automatically when the window isn't visible.
-private struct BrailleSpinner: NSViewRepresentable {
-    let color: Color
-    var pointSize: CGFloat = 10
+#if canImport(AppKit)
 
-    func makeNSView(context: Context) -> SpinnerView { SpinnerView(color: NSColor(color), pointSize: pointSize) }
-    func updateNSView(_ nsView: SpinnerView, context: Context) {}
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SpinnerView, context: Context) -> CGSize? {
+/// A braille status badge: a still cell, a pulsing cell, or (with >1 glyph) the
+/// cycling spinner — rendered to images once and animated in the render server.
+///
+/// Anything that updates SwiftUI state per frame (TimelineView Text swaps, SF
+/// Symbol effects) re-renders the sidebar row 8–30×/sec and measured 7–17% CPU
+/// per visible badge. Here the frames are cycled by a `CAKeyframeAnimation` on
+/// the layer's `contents` (or a `CABasicAnimation` on opacity for the pulse) —
+/// the window server runs the loop, the app does zero per-frame work, and macOS
+/// pauses it when the window isn't visible.
+private struct BrailleBadge: NSViewRepresentable {
+    let color: Color
+    var pointSize: CGFloat = 14
+    /// >1 glyph → cycle them (the spinner); a single glyph → a still cell.
+    var glyphs: [String]
+    /// Breathe the cell's opacity on top (the waiting state).
+    var pulses = false
+
+    func makeNSView(context: Context) -> BadgeView {
+        BadgeView(color: NSColor(color), pointSize: pointSize, glyphs: glyphs, pulses: pulses)
+    }
+    func updateNSView(_ nsView: BadgeView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: BadgeView, context: Context) -> CGSize? {
         nsView.intrinsicContentSize
     }
 
-    final class SpinnerView: NSView {
-        private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    final class BadgeView: NSView {
         private static let frameInterval = 0.125
         static func glyphSize(for pointSize: CGFloat) -> NSSize {
             NSSize(width: pointSize * 0.8, height: pointSize * 1.2)
         }
         private let glyphSize: NSSize
         private let images: [CGImage]
+        private let pulses: Bool
 
-        init(color: NSColor, pointSize: CGFloat) {
+        init(color: NSColor, pointSize: CGFloat, glyphs: [String], pulses: Bool) {
             glyphSize = Self.glyphSize(for: pointSize)
-            images = Self.renderFrames(color: color, pointSize: pointSize)
+            self.pulses = pulses
+            let font = NSFont.monospacedSystemFont(ofSize: pointSize * 2, weight: .regular)
+            images = renderBrailleImages(glyphs, font: font, cgColor: color.cgColor,
+                                         pixelSize: CGSize(width: glyphSize.width * 2,
+                                                           height: glyphSize.height * 2))
             super.init(frame: NSRect(origin: .zero, size: glyphSize))
             wantsLayer = true
+            layer?.contents = images.first  // stable base; see install()
             setContentHuggingPriority(.required, for: .horizontal)
             setContentHuggingPriority(.required, for: .vertical)
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(reinstall),
+                name: NSApplication.didBecomeActiveNotification, object: nil)
         }
 
         @available(*, unavailable)
@@ -1264,119 +1233,96 @@ private struct BrailleSpinner: NSViewRepresentable {
 
         override var intrinsicContentSize: NSSize { glyphSize }
 
-        // CA strips animations from a layer that leaves the hierarchy, so
-        // (re)install whenever we land in a window.
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard let layer, window != nil else { return }
+        // CA strips a layer's animations when it leaves the hierarchy, when the
+        // app deactivates, on a superview move (which doesn't re-fire
+        // viewDidMoveToWindow), and on other tree rebuilds with no callback at
+        // all. Defence in depth: reinstall from every lifecycle hook, restart via
+        // the animation's stop delegate for the callback-less strips, and keep the
+        // base `contents` so it degrades to a still glyph rather than vanishing.
+        private func install() {
+            guard let layer else { return }
             layer.contentsScale = window?.backingScaleFactor ?? 2
-            guard layer.animation(forKey: "belfry.spin") == nil else { return }
-            let animation = CAKeyframeAnimation(keyPath: "contents")
-            animation.values = images
-            animation.calculationMode = .discrete
-            animation.duration = Double(images.count) * Self.frameInterval
-            animation.repeatCount = .infinity
-            layer.add(animation, forKey: "belfry.spin")
+            layer.contents = images.first
+            guard layer.animation(forKey: "belfry.badge") == nil else { return }
+            let animation: CAAnimation
+            if images.count > 1 {
+                let cycle = CAKeyframeAnimation(keyPath: "contents")
+                cycle.values = images
+                cycle.calculationMode = .discrete
+                cycle.duration = Double(images.count) * Self.frameInterval
+                cycle.repeatCount = .infinity
+                animation = cycle
+            } else if pulses {
+                animation = makePulseAnimation()
+            } else {
+                return  // still cell — the base `contents` is all it needs
+            }
+            animation.delegate = AnimationRestarter { [weak self] in
+                guard let self, self.window != nil,
+                      self.layer?.animation(forKey: "belfry.badge") == nil else { return }
+                self.install()
+            }
+            layer.add(animation, forKey: "belfry.badge")
         }
 
-        /// Draw each braille frame once into a 2x bitmap tinted `color`.
-        private static func renderFrames(color: NSColor, pointSize: CGFloat) -> [CGImage] {
-            let scale: CGFloat = 2
-            let glyph = glyphSize(for: pointSize)
-            let size = NSSize(width: glyph.width * scale, height: glyph.height * scale)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: pointSize * scale, weight: .regular),
-                .foregroundColor: color,
-            ]
-            return frames.compactMap { glyph in
-                guard let rep = NSBitmapImageRep(
-                    bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
-                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-                ) else { return nil }
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-                (glyph as NSString).draw(at: .zero, withAttributes: attributes)
-                NSGraphicsContext.restoreGraphicsState()
-                return rep.cgImage
-            }
+        @objc private func reinstall() {
+            layer?.removeAnimation(forKey: "belfry.badge")
+            install()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil { install() }
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            if superview != nil { install() }
         }
     }
 }
 
 #else  // UIKit — same render-server animations, UIView-hosted.
 
-/// iOS twin of the macOS PulsingIcon (see that doc comment for the why).
-private struct PulsingIcon: UIViewRepresentable {
-    let systemName: String
+/// iOS twin of the macOS BrailleBadge (see that doc comment for the why).
+private struct BrailleBadge: UIViewRepresentable {
     let color: Color
-    var pointSize: CGFloat = 10
+    var pointSize: CGFloat = 14
+    /// >1 glyph → cycle them (the spinner); a single glyph → a still cell.
+    var glyphs: [String]
+    /// Breathe the cell's opacity on top (the waiting state).
+    var pulses = false
 
-    func makeUIView(context: Context) -> IconView {
-        IconView(systemName: systemName, color: UIColor(color), pointSize: pointSize)
+    func makeUIView(context: Context) -> BadgeView {
+        BadgeView(color: UIColor(color), pointSize: pointSize, glyphs: glyphs, pulses: pulses)
     }
-    func updateUIView(_ uiView: IconView, context: Context) {}
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: IconView, context: Context) -> CGSize? {
+    func updateUIView(_ uiView: BadgeView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: BadgeView, context: Context) -> CGSize? {
         uiView.intrinsicContentSize
     }
 
-    final class IconView: UIView {
-        private let iconSize: CGSize
-        private let imageView = UIImageView()
-
-        init(systemName: String, color: UIColor, pointSize: CGFloat) {
-            iconSize = CGSize(width: pointSize + 2, height: pointSize + 2)
-            super.init(frame: CGRect(origin: .zero, size: iconSize))
-            let config = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
-            imageView.image = UIImage(systemName: systemName, withConfiguration: config)
-            imageView.tintColor = color
-            imageView.contentMode = .scaleAspectFit
-            imageView.frame = bounds
-            imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            addSubview(imageView)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-        override var intrinsicContentSize: CGSize { iconSize }
-
-        // CA strips animations from a layer that leaves the hierarchy, so
-        // (re)install whenever we land in a window.
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            guard window != nil else { return }
-            let layer = imageView.layer
-            guard layer.animation(forKey: "belfry.pulse") == nil else { return }
-            layer.add(makePulseAnimation(), forKey: "belfry.pulse")
-        }
-    }
-}
-
-/// iOS twin of the macOS BrailleSpinner (see that doc comment for the why).
-private struct BrailleSpinner: UIViewRepresentable {
-    let color: Color
-    var pointSize: CGFloat = 10
-
-    func makeUIView(context: Context) -> SpinnerView { SpinnerView(color: UIColor(color), pointSize: pointSize) }
-    func updateUIView(_ uiView: SpinnerView, context: Context) {}
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: SpinnerView, context: Context) -> CGSize? {
-        uiView.intrinsicContentSize
-    }
-
-    final class SpinnerView: UIView {
-        private static let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    final class BadgeView: UIView {
         private static let frameInterval = 0.125
         static func glyphSize(for pointSize: CGFloat) -> CGSize {
             CGSize(width: pointSize * 0.8, height: pointSize * 1.2)
         }
         private let glyphSize: CGSize
         private let images: [CGImage]
+        private let pulses: Bool
 
-        init(color: UIColor, pointSize: CGFloat) {
+        init(color: UIColor, pointSize: CGFloat, glyphs: [String], pulses: Bool) {
             glyphSize = Self.glyphSize(for: pointSize)
-            images = Self.renderFrames(color: color, pointSize: pointSize)
+            self.pulses = pulses
+            let font = UIFont.monospacedSystemFont(ofSize: pointSize * 2, weight: .regular)
+            images = renderBrailleImages(glyphs, font: font, cgColor: color.cgColor,
+                                         pixelSize: CGSize(width: glyphSize.width * 2,
+                                                           height: glyphSize.height * 2))
             super.init(frame: CGRect(origin: .zero, size: glyphSize))
+            layer.contentsScale = 2
+            layer.contents = images.first  // stable base; see install()
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(reinstall),
+                name: UIApplication.didBecomeActiveNotification, object: nil)
         }
 
         @available(*, unavailable)
@@ -1384,62 +1330,51 @@ private struct BrailleSpinner: UIViewRepresentable {
 
         override var intrinsicContentSize: CGSize { glyphSize }
 
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            guard window != nil else { return }
-            layer.contentsScale = 2
-            guard layer.animation(forKey: "belfry.spin") == nil else { return }
-            let animation = CAKeyframeAnimation(keyPath: "contents")
-            animation.values = images
-            animation.calculationMode = .discrete
-            animation.duration = Double(images.count) * Self.frameInterval
-            animation.repeatCount = .infinity
-            layer.add(animation, forKey: "belfry.spin")
+        // Core Animation strips a layer's animations when it leaves the view
+        // hierarchy, when the app backgrounds, on a superview move (which does NOT
+        // re-fire didMoveToWindow), and on other tree rebuilds with no callback.
+        // Losing a `contents`-driven cycle (with a nil model value) blanked the
+        // spinner; even with a base frame it froze mid-cycle. Defence in depth:
+        // reinstall from every lifecycle hook, restart via the animation's stop
+        // delegate for the callback-less strips, and keep the base `contents` so
+        // it degrades to a still glyph rather than vanishing.
+        private func install() {
+            layer.contents = images.first
+            guard layer.animation(forKey: "belfry.badge") == nil else { return }
+            let animation: CAAnimation
+            if images.count > 1 {
+                let cycle = CAKeyframeAnimation(keyPath: "contents")
+                cycle.values = images
+                cycle.calculationMode = .discrete
+                cycle.duration = Double(images.count) * Self.frameInterval
+                cycle.repeatCount = .infinity
+                animation = cycle
+            } else if pulses {
+                animation = makePulseAnimation()
+            } else {
+                return  // still cell — the base `contents` is all it needs
+            }
+            animation.delegate = AnimationRestarter { [weak self] in
+                guard let self, self.window != nil,
+                      self.layer.animation(forKey: "belfry.badge") == nil else { return }
+                self.install()
+            }
+            layer.add(animation, forKey: "belfry.badge")
         }
 
-        /// Draw each braille frame once into a 2x bitmap tinted `color`.
-        private static func renderFrames(color: UIColor, pointSize: CGFloat) -> [CGImage] {
-            let scale: CGFloat = 2
-            let glyph = glyphSize(for: pointSize)
-            let size = CGSize(width: glyph.width * scale, height: glyph.height * scale)
-            let font = UIFont.monospacedSystemFont(ofSize: pointSize * scale, weight: .regular)
-            // Font only; the color comes from the context fill at draw time
-            // (CTLineDraw ignores `.foregroundColor`).
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: font,
-                NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
-            ]
+        @objc private func reinstall() {
+            layer.removeAnimation(forKey: "belfry.badge")
+            install()
+        }
 
-            // Center the braille *cell* in the bitmap by placing the baseline
-            // explicitly. NSString.draw(at:) anchors the top of the line box,
-            // leaving the short, high-sitting braille ink clinging to a corner.
-            // Take the fully-lit glyph's ink mid-point (constant across frames)
-            // as the cell centre and put the baseline so it lands at the bitmap's
-            // middle; every frame then draws into the same centred cell.
-            //
-            // Draw straight into a CGContext (not UIGraphicsImageRenderer, whose
-            // context is pre-flipped for UIKit and fights CTLineDraw): its native
-            // y-up space matches Core Text, so textPosition is y-up from the
-            // bottom and the glyph comes out upright.
-            let cellInk = CTLineGetImageBounds(
-                CTLineCreateWithAttributedString(NSAttributedString(string: "⣿", attributes: attributes)),
-                nil)
-            let textPosition = CGPoint(x: size.width / 2 - cellInk.midX,
-                                       y: size.height / 2 - cellInk.midY)
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { install() }
+        }
 
-            return frames.compactMap { glyph in
-                guard let ctx = CGContext(
-                    data: nil, width: Int(size.width), height: Int(size.height),
-                    bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-                ctx.setFillColor(color.cgColor)
-                ctx.textPosition = textPosition
-                CTLineDraw(
-                    CTLineCreateWithAttributedString(
-                        NSAttributedString(string: glyph, attributes: attributes)),
-                    ctx)
-                return ctx.makeImage()
-            }
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            if superview != nil { install() }
         }
     }
 }
