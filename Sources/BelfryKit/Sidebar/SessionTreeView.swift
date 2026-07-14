@@ -65,7 +65,6 @@ struct SessionTreeView: View {
 
     var body: some View {
         platformList
-        .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .background(AppTheme.sidebarBackground)
         .environment(\.defaultMinListRowHeight, Self.minRowHeight)
@@ -105,10 +104,15 @@ struct SessionTreeView: View {
     /// split view can't see, leaving the terminal unreachable.
     @ViewBuilder private var platformList: some View {
         #if os(iOS)
+        // Plain (not sidebar/grouped) so there's no built-in section margin: the
+        // whole tree's leading position is ours to set via listRowInsets
+        // (SidebarRowChrome / SidebarHeaderChrome), and headers line up with rows.
         List(selection: $selection) { treeSections }
+            .listStyle(.plain)
             .listSectionSpacing(.compact)
         #else
         List { treeSections }
+            .listStyle(.sidebar)
         #endif
     }
 
@@ -123,6 +127,7 @@ struct SessionTreeView: View {
                 }
             } header: {
                 PinnedSectionHeader()
+                    .modifier(SidebarHeaderChrome())
             }
         }
         ForEach(hosts) { host in
@@ -132,6 +137,7 @@ struct SessionTreeView: View {
             } header: {
                 HostHeader(host: host, model: model, isExpanded: expansionBinding(for: host),
                            prompt: $prompt, confirm: $confirm)
+                    .modifier(SidebarHeaderChrome())
             }
         }
     }
@@ -272,11 +278,34 @@ struct SessionTreeView: View {
 /// metrics so the tree reads as one dense sidebar (like the Mac) instead of a
 /// stack of boxed table cells. macOS's AppKit sidebar style needs none of it.
 private struct SidebarRowChrome: ViewModifier {
+    /// Shared leading inset for iOS rows and section headers, so both line up.
+    /// With the plain list style there's no section margin, so this is the
+    /// tree's actual distance from the edge (a little inside the nav title).
+    static let leading: CGFloat = 12
     func body(content: Content) -> some View {
         #if os(iOS)
         content
             .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 3, leading: 16, bottom: 3, trailing: 12))
+            // Tight leading inset: it stacks on the sidebar list style's own
+            // section margin, so 16 here pushed the whole tree ~26pt in. `Self.leading`
+            // lands content near the nav title's edge; the section headers use the
+            // same value (SidebarHeaderChrome) so they line up with their rows.
+            .listRowInsets(EdgeInsets(top: 3, leading: Self.leading, bottom: 3, trailing: 12))
+        #else
+        content
+        #endif
+    }
+}
+
+/// iOS section-header chrome: match the rows' leading inset (SidebarRowChrome)
+/// so headers line up with their content instead of keeping the sidebar style's
+/// wider default header inset. macOS's AppKit sidebar handles headers itself.
+private struct SidebarHeaderChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 0, leading: SidebarRowChrome.leading, bottom: 0, trailing: 12))
         #else
         content
         #endif
