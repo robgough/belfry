@@ -2,6 +2,48 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.14] — 2026-07-15
+
+macOS release.
+
+### Changed
+
+- **The Claude status badge is now icon-only, in one braille visual language.**
+  Every state is a braille cell rather than a mix of SF Symbols and words:
+  running is a still grey cell, working an accent spinner, agents a purple
+  spinner, idle a still green cell, and waiting a pulsing orange cell. The
+  spinner reads as a hole orbiting a full cell, and now sits upright and
+  vertically centred — the old glyphs lit only the top of the cell and sat
+  high. The badge also survives the window changes that used to blank or
+  freeze its animation.
+
+### Fixed
+
+- **Belfry could split your tmux sessions across two servers.** When the local
+  tmux server was alive but momentarily not answering — classically the machine
+  thrashing under memory pressure — Belfry read the silence as "no server" and
+  started one. tmux then treats the live socket as stale, unlinks it, and you
+  end up with two servers claiming it: your sessions silently split, and the
+  original becomes unreachable. Belfry now only ever starts a server when it has
+  confirmed there genuinely isn't one, and waits out a stall instead of guessing
+  (up to a minute, which covers a typical memory-pressure stall). If the server
+  is still wedged after that, Belfry asks rather than acting: keep waiting, or
+  start a fresh server knowing the stuck one's sessions are abandoned. Existing
+  sessions are usually fine and reappear once the machine recovers.
+- **Selecting a window in a session you weren't already viewing was
+  impossible.** The selection immediately snapped to that session's *active*
+  window, so non-active windows in other sessions couldn't be reached, and a
+  pinned window opened its session's active window instead of the pinned one —
+  making window pins behave as if they were session pins. Belfry now only
+  follows tmux's active-window moves when you were actually tracking the
+  window that moved (as with prefix-n or a status-bar click); a deliberate
+  click sticks.
+- **Pinned session rows never showed the Claude status badge.** The badge was
+  keyed off a window of its own, which a session pin doesn't have, so it
+  silently vanished — even though the Claude title line directly above it
+  showed. Session pins now track their session's active window, like that
+  title line already did. Window pins are unaffected.
+
 ## [2026.07.12] — 2026-07-11
 
 macOS release.
