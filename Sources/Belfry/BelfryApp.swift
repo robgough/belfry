@@ -101,6 +101,22 @@ struct RootView: View {
         } message: { action in
             Text(action.message)
         }
+        // Local tmux server up but wedged past the auto-wait (memory pressure):
+        // ask rather than silently start a competing server that would orphan its
+        // sessions. Default (dismiss) keeps waiting; "Start fresh server" is opt-in.
+        .alert(
+            "Local tmux server isn’t responding",
+            isPresented: Binding(get: { model.stuckHost != nil },
+                                 set: { if !$0 { model.stuckHost?.keepWaitingForServer() } }),
+            presenting: model.stuckHost
+        ) { host in
+            Button("Keep waiting") { host.keepWaitingForServer() }
+            Button("Start fresh server", role: .destructive) { host.createFreshServer() }
+        } message: { _ in
+            Text("It may be stuck under memory pressure. Your existing sessions are "
+                 + "probably fine and will reappear once it recovers. Starting a fresh "
+                 + "server abandons whatever the stuck one is holding.")
+        }
     }
 
     private var addMenu: some View {

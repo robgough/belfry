@@ -94,6 +94,15 @@ protocol HooksManaging: Sendable {
     func remove() -> HooksOutcome
 }
 
+/// Whether the underlying tmux server is reachable enough for a control client
+/// to attach. `unresponsive` means a server is *present but not answering* —
+/// classically the local box thrashing under memory pressure — where blindly
+/// starting one anyway would unlink the live socket and orphan its sessions.
+enum ServerReadiness {
+    case ready         // a server is up (or we just started one) — safe to attach
+    case unresponsive  // a server is there but wedged; caller should ask the user
+}
+
 /// How to reach one tmux server. Everything platform-specific about talking
 /// to a host lives behind this: the control channel, the per-session terminal
 /// surfaces, cached-auth invalidation, and (where supported) hooks management.
@@ -105,6 +114,14 @@ protocol HostTransport {
     var savedHost: SavedHost? { get }
     var hooksManager: (any HooksManaging)? { get }
 
+    /// Make sure a tmux server is reachable before a control client attaches.
+    /// Blocking work runs off-main; the local transport auto-waits through a
+    /// transient stall and only reports `.unresponsive` once it's clearly stuck.
+    /// `forceCreate` starts a fresh server even over a wedged one (user opted in
+    /// via the "Start fresh server" prompt). Default: assume ready — remote
+    /// servers are managed by ssh/tmux on connect, nothing to pre-flight.
+    func prepareServer(controlSessionName: String, forceCreate: Bool) async -> ServerReadiness
+
     func makeControlChannel(controlSessionName: String) -> any ControlChannel
     func makeSurfaceWorkspace(sessionName: String) -> any TerminalWorkspace
     /// Drop any cached authentication so the next connect re-prompts
@@ -113,4 +130,9 @@ protocol HostTransport {
     /// The host is being removed from the app: delete any stored credentials
     /// (iOS: the Keychain entry; macOS: nothing — auth lives in ~/.ssh).
     func cleanUpOnRemoval()
+}
+
+extension HostTransport {
+    /// Remote transports have no local server to pre-flight.
+    func prepareServer(controlSessionName: String, forceCreate: Bool) async -> ServerReadiness { .ready }
 }

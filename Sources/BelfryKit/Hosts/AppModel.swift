@@ -47,6 +47,10 @@ final class AppModel {
     /// Hosts that can currently host a new session (their link is live).
     var connectedHosts: [HostModel] { hosts.filter { $0.store.status.isLive } }
 
+    /// The host (if any) whose local tmux server is up but wedged and awaiting a
+    /// user decision — drives the "server not responding" prompt.
+    var stuckHost: HostModel? { hosts.first { $0.serverStuck } }
+
     /// Number of windows across all hosts where Claude is waiting for you — drives
     /// the Dock badge so you notice while Belfry is in the background.
     var attentionCount: Int {

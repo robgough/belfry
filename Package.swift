@@ -51,5 +51,22 @@ let package = Package(
             path: "Sources/BelfryAskpass",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Unit tests (macOS host). Depends on the app target so `@testable import
+        // Belfry` can reach internal seams like `LaunchdTmux.runOutcome`.
+        .testTarget(
+            name: "BelfryTests",
+            dependencies: ["Belfry"],
+            path: "Tests/BelfryTests",
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            // The app target links Sparkle.framework (normally embedded into the
+            // .app by make_app.sh). A bare `swift test` bundle has no such embed,
+            // and SIP strips DYLD_FRAMEWORK_PATH from Xcode's signed test helper,
+            // so point the loader at the framework SwiftPM already built alongside
+            // the xctest bundle: <build>/Debug/Sparkle.framework, three levels up
+            // from the test binary in …/BelfryTests.xctest/Contents/MacOS/.
+            linkerSettings: [.unsafeFlags([
+                "-Xlinker", "-rpath", "-Xlinker", "@loader_path/../../..",
+            ])]
+        ),
     ]
 )

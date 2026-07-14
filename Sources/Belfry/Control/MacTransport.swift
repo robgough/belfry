@@ -18,14 +18,13 @@ final class PTYControlChannel: ControlChannel {
 
     private let process = TerminiLocalPTYProcess()
     private let spec: TerminiProcessSpec
-    private let ensuresLocalServer: Bool
-    private let controlSessionName: String
     private var stopRequested = false
 
-    init(spec: TerminiProcessSpec, ensuresLocalServer: Bool, controlSessionName: String) {
+    // The LOCAL server is ensured (launchd-owned, coalition-safe) *before* this
+    // channel is started — see `TmuxTransport.prepareServer`, driven by HostModel
+    // so a wedged server can be surfaced to the user instead of silently hijacked.
+    init(spec: TerminiProcessSpec) {
         self.spec = spec
-        self.ensuresLocalServer = ensuresLocalServer
-        self.controlSessionName = controlSessionName
         process.onOutput = { [weak self] data in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.onOutput?(data) }
@@ -39,20 +38,7 @@ final class PTYControlChannel: ControlChannel {
     }
 
     func start() {
-        guard ensuresLocalServer else { startProcess(); return }
-        // Make sure the LOCAL server is started by launchd (outside Belfry's
-        // coalition) so a Dock Force-Quit can't take it — then attach. Bounded
-        // (never blocks indefinitely), so we always reach startProcess().
-        let session = controlSessionName
-        DispatchQueue.global().async { [weak self] in
-            LaunchdTmux.ensureLocalServer(controlSessionName: session)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, !self.stopRequested else { return }
-                    self.startProcess()
-                }
-            }
-        }
+        startProcess()
     }
 
     private func startProcess() {
@@ -86,13 +72,25 @@ extension TmuxTransport: HostTransport {
         TmuxHooksManager(transport: self)
     }
 
+    // Ensure the LOCAL tmux server is up (launchd-owned) before a client attaches.
+    // Runs the blocking probe/wait off-main. Only the local transport has a server
+    // to pre-flight; ssh hosts fall through to the protocol default (`.ready`).
+    func prepareServer(controlSessionName: String, forceCreate: Bool) async -> ServerReadiness {
+        guard isLocal else { return .ready }
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let result = LaunchdTmux.ensureLocalServer(
+                    controlSessionName: controlSessionName, forceCreate: forceCreate)
+                continuation.resume(returning: result == .ready ? .ready : .unresponsive)
+            }
+        }
+    }
+
     // `-u` on every client: a GUI-launched app has no LANG in its environment,
     // and a non-UTF-8 tmux client gets every non-ASCII cell rewritten as `_`.
     func makeControlChannel(controlSessionName: String) -> any ControlChannel {
         PTYControlChannel(
-            spec: tmuxProcessSpec(["-u", "-C", "new-session", "-A", "-s", controlSessionName]),
-            ensuresLocalServer: isLocal,
-            controlSessionName: controlSessionName)
+            spec: tmuxProcessSpec(["-u", "-C", "new-session", "-A", "-s", controlSessionName]))
     }
 
     func makeSurfaceWorkspace(sessionName: String) -> any TerminalWorkspace {

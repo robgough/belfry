@@ -40,6 +40,12 @@ final class HostModel: Identifiable {
     private var reconnectAttempts = 0
     private var reconnectWork: DispatchWorkItem?
 
+    /// The local tmux server is up but not answering (classically the box
+    /// thrashing under memory pressure) and has stayed that way past the auto-wait.
+    /// Drives the "server stuck" prompt; cleared when the user chooses or a later
+    /// connect succeeds. We stop here rather than let the client hijack the socket.
+    private(set) var serverStuck = false
+
     /// Whether this connection intent has ever reached `connected`. A link that
     /// has connected and then drops is treated as a transient outage (retry
     /// forever); one that has *never* connected is treated as a config/auth
@@ -81,8 +87,7 @@ final class HostModel: Identifiable {
         reconnectAttempts = 0
         everConnected = false
         lastFailureReason = nil
-        client.ensureSessionOnConnect = true
-        client.start()
+        prepareThenStart(ensureSession: true, forceServerCreate: false)
     }
 
     /// User-initiated disconnect: drop the link + warm surfaces, stay down.
@@ -219,7 +224,7 @@ final class HostModel: Identifiable {
         return reason.count > 80 ? String(reason.prefix(79)) + "…" : reason
     }
 
-    private func rebuildClientAndStart(ensureSession: Bool) {
+    private func rebuildClientAndStart(ensureSession: Bool, forceServerCreate: Bool = false) {
         client.onExitHandler = nil            // detach the old client
         // Stop it explicitly: a *manual* reconnect can arrive while the old link
         // is still live, and just dropping the reference would strand its poll
@@ -231,8 +236,57 @@ final class HostModel: Identifiable {
             channel: transport.makeControlChannel(controlSessionName: controlSessionName),
             controlSessionName: controlSessionName)
         wireClient()
+        prepareThenStart(ensureSession: ensureSession, forceServerCreate: forceServerCreate)
+    }
+
+    /// Ensure the host's tmux server is reachable, then start the control client.
+    /// If the local server is wedged past the auto-wait, surface the decision to
+    /// the user (`serverStuck`) instead of letting the client hijack the socket.
+    private func prepareThenStart(ensureSession: Bool, forceServerCreate: Bool) {
+        serverStuck = false
         client.ensureSessionOnConnect = ensureSession
-        client.start()
+        let startedClient = client
+        let name = controlSessionName
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let readiness = await self.transport.prepareServer(
+                controlSessionName: name, forceCreate: forceServerCreate)
+            // Bail if the intent changed or the client was rebuilt while we waited.
+            guard self.wantsConnection, self.client === startedClient else { return }
+            switch readiness {
+            case .ready:        startedClient.start()
+            case .unresponsive: self.enterServerStuckState()
+            }
+        }
+    }
+
+    /// The local server is present but has stayed unresponsive past the auto-wait.
+    /// Stop (no auto-reconnect, no hijack) and let the UI ask the user what to do.
+    private func enterServerStuckState() {
+        reconnectWork?.cancel()
+        reconnectWork = nil
+        store.status = .disconnected("Local tmux server isn’t responding")
+        serverStuck = true
+    }
+
+    /// User chose "Start fresh server" over a stuck one — abandons the wedged
+    /// server's sessions and boots a clean one.
+    func createFreshServer() {
+        guard wantsConnection else { return }
+        serverStuck = false
+        reconnectAttempts = 0
+        store.status = .connecting
+        rebuildClientAndStart(ensureSession: true, forceServerCreate: true)
+    }
+
+    /// User chose "Keep waiting" — re-enter the auto-wait; if the server recovers
+    /// we attach, otherwise the prompt returns.
+    func keepWaitingForServer() {
+        guard wantsConnection else { return }
+        serverStuck = false
+        reconnectAttempts = 0
+        store.status = .connecting
+        rebuildClientAndStart(ensureSession: false, forceServerCreate: false)
     }
 
     // MARK: Claude status hooks
