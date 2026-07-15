@@ -2,6 +2,24 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.15] — 2026-07-15
+
+macOS release.
+
+### Fixed
+
+- **Your tmux config's plugins now load on ssh hosts.** A tmux server Belfry
+  started over ssh applied every plain `set` line in your `tmux.conf` but none
+  of the plugins: no TPM, no theme, a stock status bar — and any `#{@…}`
+  variables your config referenced sat there unexpanded, since the plugin that
+  defines them never ran. The server was left holding sshd's bare `PATH`, which
+  has no `/opt/homebrew/bin` in it, and it passes that environment to every
+  `run-shell` — so each plugin's call to `tmux` failed with "command not found",
+  silently. Belfry now hands the server the `PATH` your login shell would have
+  built, so a session it starts matches one you'd get by running tmux yourself
+  over ssh. A server that's already running keeps its old environment: restart
+  it (or the host's link) to pick this up.
+
 ## [2026.07.14] — 2026-07-15
 
 macOS release.
