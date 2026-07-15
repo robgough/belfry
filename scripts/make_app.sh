@@ -24,23 +24,55 @@ CONFIG="${1:-debug}"
 VERSION="${VERSION:-0.1}"
 BUILD_NUM="${BUILD_NUM:-1}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
-ARCH_FLAGS=()
-[ "${UNIVERSAL:-0}" = "1" ] && ARCH_FLAGS=(--arch arm64 --arch x86_64)
+# Deployment target for cross-built slices; matches Package.swift's .macOS(.v14).
+MACOS_MIN="14.0"
 
-echo "› building ($CONFIG${UNIVERSAL:+, universal})…"
 # Quiet on success, but say everything on failure. SwiftPM reports plenty on
 # stdout, so `>/dev/null` didn't just hide progress: a failed CI build printed
 # "› building (release, universal)…" then exit 1 and nothing else, with the
 # reason discarded at the source rather than merely unread.
-BUILD_LOG="$(mktemp -t belfry-build)"
-if ! swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} >"$BUILD_LOG" 2>&1; then
-    echo "✗ swift build failed:" >&2
-    cat "$BUILD_LOG" >&2
-    rm -f "$BUILD_LOG"
-    exit 1
+build() {  # build <extra swift build args…>
+    local log; log="$(mktemp -t belfry-build)"
+    if ! swift build -c "$CONFIG" "$@" >"$log" 2>&1; then
+        echo "✗ swift build ${*} failed:" >&2
+        cat "$log" >&2
+        rm -f "$log"
+        exit 1
+    fi
+    rm -f "$log"
+}
+
+if [ "${UNIVERSAL:-0}" = "1" ]; then
+    # Build each slice on its own and lipo them, rather than the one-shot
+    # `swift build --arch arm64 --arch x86_64`. --arch routes SwiftPM through
+    # XCBuild, and XCBuild wants the Metal *toolchain component* to compile
+    # SwiftTerm's Shaders.metal — which a stock runner hasn't got, and can't
+    # install for an Xcode its OS didn't ship with. A plain `swift build` never
+    # goes near XCBuild: it invokes `xcrun metal`, which works anywhere Xcode
+    # does, and is why `swift test` passed on every runner this failed on.
+    # (--arch also trips swift-package-manager#7958 on some SwiftPM versions.
+    # This dodges both, on any toolchain.)
+    echo "› building ($CONFIG, universal — one pass per slice)…"
+    STAGE="$(mktemp -d -t belfry-slices)"
+    trap 'rm -rf "$STAGE"' EXIT
+    for ARCH in arm64 x86_64; do
+        echo "  · $ARCH"
+        build --triple "$ARCH-apple-macosx$MACOS_MIN"
+        SLICE_BIN="$(swift build -c "$CONFIG" --triple "$ARCH-apple-macosx$MACOS_MIN" --show-bin-path)"
+        # Copy each slice out before the next pass: with some build systems both
+        # triples resolve to the same bin path, so the second would clobber it.
+        cp "$SLICE_BIN/Belfry" "$STAGE/Belfry.$ARCH"
+        cp "$SLICE_BIN/belfry-askpass" "$STAGE/belfry-askpass.$ARCH"
+    done
+    BINDIR="$STAGE"
+    lipo -create "$STAGE/Belfry.arm64" "$STAGE/Belfry.x86_64" -output "$STAGE/Belfry"
+    lipo -create "$STAGE/belfry-askpass.arm64" "$STAGE/belfry-askpass.x86_64" \
+         -output "$STAGE/belfry-askpass"
+else
+    echo "› building ($CONFIG)…"
+    build
+    BINDIR="$(swift build -c "$CONFIG" --show-bin-path)"
 fi
-rm -f "$BUILD_LOG"
-BINDIR="$(swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)"
 BIN="$BINDIR/Belfry"
 ASKPASS="$BINDIR/belfry-askpass"
 [ -x "$BIN" ] || { echo "✗ binary not found at $BIN"; exit 1; }

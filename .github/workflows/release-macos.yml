@@ -70,40 +70,11 @@ jobs:
 
       # Inputs come from a write-access user, but they still reach a shell:
       # validate the shape rather than interpolate `${{ }}` into `run:`.
-      # Xcode 26 unbundled the Metal compiler into a downloadable component, and
-      # the image doesn't ship it (actions/runner-images#13080). SwiftTerm has
-      # Shaders.metal, so the build dies with:
-      #   cannot execute tool 'metal' due to missing Metal Toolchain
-      # hailmary already has it — as a cryptex-mounted MobileAsset, the same one
-      # RELEASING.md's "Metal cryptex remounted" gotcha is about — which is why
-      # local builds never hit this. Xcode 16.4 still bundles Metal, but 16.4
-      # can't do the universal build (see above), so: fetch it. ~700MB, hence
-      # the check rather than an unconditional download.
-      #
-      # Download unconditionally. The obvious gate — `-showComponent … Status:
-      # installed` — is a trap: it reported installed and `xcrun -f metal`
-      # resolved a binary, yet XCBuild still refused, because the asset present
-      # isn't the version *this* Xcode wants. So neither the status string nor a
-      # resolvable `metal` proves the toolchain is usable, and skipping on them
-      # just reproduces the failure 9 seconds faster.
-      - name: Install the Metal toolchain
-        run: |
-          set -euo pipefail
-          echo "--- before ---"
-          xcodebuild -showComponent metalToolchain 2>&1 | head -4 || true
-          xcrun -f metal 2>&1 || true
-          echo "› downloading the Metal toolchain for this Xcode (~700MB)…"
-          xcodebuild -downloadComponent metalToolchain
-          echo "--- after ---"
-          xcodebuild -showComponent metalToolchain 2>&1 | head -4 || true
-          # Functional check: does the compiler this Xcode resolves actually run?
-          printf 'kernel void probe_kernel() {}\n' > "$RUNNER_TEMP/probe.metal"
-          if xcrun metal -c "$RUNNER_TEMP/probe.metal" -o "$RUNNER_TEMP/probe.air"; then
-            echo "› metal compiles: $(xcrun -f metal)"
-          else
-            echo "::error::Metal compiler still unusable after -downloadComponent"
-            exit 1
-          fi
+      # No Metal-toolchain step: make_app.sh no longer builds via --arch, so the
+      # build never enters XCBuild, and it's XCBuild that demands the Metal
+      # toolchain *component*. The ordinary path just runs `xcrun metal`, which
+      # works on a stock runner — which is exactly why `swift test` passed on
+      # every runner the universal build failed on.
 
       - name: Resolve version
         id: v
