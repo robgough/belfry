@@ -33,7 +33,14 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    # macOS 26, not 15. Xcode 26 needs its own OS to be whole: on the macos-15
+    # image, Xcode 26.3 can't get a Metal toolchain — `-downloadComponent`
+    # no-ops in seconds because an asset is already installed, but it's not the
+    # one XCBuild wants, so Shaders.metal never compiles. This image carries
+    # only Xcode 26.x (26.5 default, released), which is also new enough that
+    # --arch doesn't trip swift-package-manager#7958 — the reason we couldn't
+    # just use the macos-15 default of 16.4.
+    runs-on: macos-26
     timeout-minutes: 90
     environment: release
     steps:
@@ -44,31 +51,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Newest *released* Xcode, explicitly never a beta. A shipped release
-      # shouldn't carry a beta SDK — the image ships released Xcodes only, but
-      # the grep means this can't quietly drift onto one if that changes.
-      # hailmary has only Xcode 27 beta installed, which is why local builds
-      # warn about a macOS 27 SDK; CI deliberately doesn't reproduce that.
+      # The image default (/Applications/Xcode.app → a released Xcode 26.x): the
+      # configuration this image is actually built and tested around, which is
+      # what we want after chasing a hand-picked Xcode into an unsupported
+      # corner. Released, never a beta — hailmary has only Xcode 27 beta, hence
+      # its macOS 27 SDK warning, and CI deliberately doesn't reproduce that.
       #
-      # Not the image *default* either, which is Xcode 16.4 (Swift 6.0): there
-      # the universal build dies, because `--arch` routes SwiftPM through the
-      # PIF build system, which rejects .swiftLanguageMode(.v5) —
-      #   Some of the Swift language versions used in target 'Belfry'
-      #   settings are not supported. (given: [5], supported: [])
-      # swiftlang/swift-package-manager#7958, open, and its only workaround
-      # (.version("5.0")) breaks plain `swift build` instead. `swift test`
-      # passes on 16.4 precisely because it never passes --arch.
-      #
-      # DEVELOPER_DIR goes into GITHUB_ENV for every later step: make_app.sh
-      # otherwise picks the newest Xcode *it* can find, which isn't this one.
-      - name: Select Xcode (newest released)
+      # DEVELOPER_DIR goes into GITHUB_ENV for every later step. make_app.sh
+      # would pick this same path on its own now, but be explicit.
+      - name: Select Xcode (image default, released)
         run: |
           set -euo pipefail
-          XC="$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)"
-          [ -n "$XC" ] || { echo "::error::no Xcode_*.app on this image"; exit 1; }
-          sudo xcode-select -s "$XC/Contents/Developer"
-          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
-          echo "› selected $XC"
+          [ -d /Applications/Xcode.app ] || { echo "::error::no /Applications/Xcode.app"; exit 1; }
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          echo "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_ENV"
           xcodebuild -version
           swift --version
 
