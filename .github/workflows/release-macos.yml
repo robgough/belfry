@@ -83,17 +83,31 @@ jobs:
       # local builds never hit this. Xcode 16.4 still bundles Metal, but 16.4
       # can't do the universal build (see above), so: fetch it. ~700MB, hence
       # the check rather than an unconditional download.
+      #
+      # Download unconditionally. The obvious gate — `-showComponent … Status:
+      # installed` — is a trap: it reported installed and `xcrun -f metal`
+      # resolved a binary, yet XCBuild still refused, because the asset present
+      # isn't the version *this* Xcode wants. So neither the status string nor a
+      # resolvable `metal` proves the toolchain is usable, and skipping on them
+      # just reproduces the failure 9 seconds faster.
       - name: Install the Metal toolchain
         run: |
           set -euo pipefail
-          if xcodebuild -showComponent metalToolchain 2>/dev/null | grep -q 'Status: installed'; then
-            echo "› Metal toolchain already installed"
+          echo "--- before ---"
+          xcodebuild -showComponent metalToolchain 2>&1 | head -4 || true
+          xcrun -f metal 2>&1 || true
+          echo "› downloading the Metal toolchain for this Xcode (~700MB)…"
+          xcodebuild -downloadComponent metalToolchain
+          echo "--- after ---"
+          xcodebuild -showComponent metalToolchain 2>&1 | head -4 || true
+          # Functional check: does the compiler this Xcode resolves actually run?
+          printf 'kernel void probe_kernel() {}\n' > "$RUNNER_TEMP/probe.metal"
+          if xcrun metal -c "$RUNNER_TEMP/probe.metal" -o "$RUNNER_TEMP/probe.air"; then
+            echo "› metal compiles: $(xcrun -f metal)"
           else
-            echo "› downloading Metal toolchain (~700MB)…"
-            xcodebuild -downloadComponent metalToolchain
+            echo "::error::Metal compiler still unusable after -downloadComponent"
+            exit 1
           fi
-          # Assert it's actually reachable rather than trust the exit code.
-          echo "› metal: $(xcrun -f metal)"
 
       - name: Resolve version
         id: v
