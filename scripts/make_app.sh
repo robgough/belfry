@@ -10,7 +10,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+# Prefer a *released* Xcode over a beta: a shipped build shouldn't carry a beta
+# SDK, which is the same reason RELEASING.md gives for iOS, and release_ios.sh
+# already picks in this order. hailmary has only the beta installed, so it still
+# lands there (hence the macOS 27 SDK warning) — but the moment a release Xcode
+# is installed, or DEVELOPER_DIR is set (CI does), that wins.
+if [ -z "${DEVELOPER_DIR:-}" ]; then
+    for XC in /Applications/Xcode.app /Applications/Xcode-beta.app; do
+        [ -d "$XC" ] && { export DEVELOPER_DIR="$XC/Contents/Developer"; break; }
+    done
+fi
 CONFIG="${1:-debug}"
 VERSION="${VERSION:-0.1}"
 BUILD_NUM="${BUILD_NUM:-1}"

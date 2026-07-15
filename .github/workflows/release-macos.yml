@@ -44,30 +44,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The image's default is Xcode 16.4 (Swift 6.0), which cannot do the
-      # universal build: `--arch` switches SwiftPM to the PIF build system,
-      # which rejects .swiftLanguageMode(.v5) with
+      # Newest *released* Xcode, explicitly never a beta. A shipped release
+      # shouldn't carry a beta SDK — the image ships released Xcodes only, but
+      # the grep means this can't quietly drift onto one if that changes.
+      # hailmary has only Xcode 27 beta installed, which is why local builds
+      # warn about a macOS 27 SDK; CI deliberately doesn't reproduce that.
+      #
+      # Not the image *default* either, which is Xcode 16.4 (Swift 6.0): there
+      # the universal build dies, because `--arch` routes SwiftPM through the
+      # PIF build system, which rejects .swiftLanguageMode(.v5) —
       #   Some of the Swift language versions used in target 'Belfry'
       #   settings are not supported. (given: [5], supported: [])
-      # That's swiftlang/swift-package-manager#7958, still open — the only
-      # workaround it offers (.version("5.0")) just breaks plain `swift build`
-      # instead. hailmary builds this fine on Xcode 27 beta / Swift 6.4, so take
-      # the newest Xcode the image has rather than the oldest. `swift test`
+      # swiftlang/swift-package-manager#7958, open, and its only workaround
+      # (.version("5.0")) breaks plain `swift build` instead. `swift test`
       # passes on 16.4 precisely because it never passes --arch.
       #
-      # DEVELOPER_DIR goes into the env for every later step: make_app.sh
-      # otherwise defaults it to Xcode-beta, which exists only on hailmary.
-      - name: Select Xcode
+      # DEVELOPER_DIR goes into GITHUB_ENV for every later step: make_app.sh
+      # otherwise picks the newest Xcode *it* can find, which isn't this one.
+      - name: Select Xcode (newest released)
         run: |
           set -euo pipefail
-          XC="$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1)"
-          if [ -z "$XC" ]; then
-            echo "::warning::no Xcode 26+ on this image; falling back to the default, \
-          which may hit swift-package-manager#7958 on the universal build"
-            XC=/Applications/Xcode.app
-          fi
+          XC="$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)"
+          [ -n "$XC" ] || { echo "::error::no Xcode_*.app on this image"; exit 1; }
           sudo xcode-select -s "$XC/Contents/Developer"
           echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          echo "› selected $XC"
           xcodebuild -version
           swift --version
 
