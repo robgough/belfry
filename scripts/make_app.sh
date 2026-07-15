@@ -28,7 +28,18 @@ ARCH_FLAGS=()
 [ "${UNIVERSAL:-0}" = "1" ] && ARCH_FLAGS=(--arch arm64 --arch x86_64)
 
 echo "› building ($CONFIG${UNIVERSAL:+, universal})…"
-swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} >/dev/null
+# Quiet on success, but say everything on failure. SwiftPM reports plenty on
+# stdout, so `>/dev/null` didn't just hide progress: a failed CI build printed
+# "› building (release, universal)…" then exit 1 and nothing else, with the
+# reason discarded at the source rather than merely unread.
+BUILD_LOG="$(mktemp -t belfry-build)"
+if ! swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} >"$BUILD_LOG" 2>&1; then
+    echo "✗ swift build failed:" >&2
+    cat "$BUILD_LOG" >&2
+    rm -f "$BUILD_LOG"
+    exit 1
+fi
+rm -f "$BUILD_LOG"
 BINDIR="$(swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)"
 BIN="$BINDIR/Belfry"
 ASKPASS="$BINDIR/belfry-askpass"
