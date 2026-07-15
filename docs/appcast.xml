@@ -3,6 +3,16 @@
     <channel>
         <title>Belfry</title>
         <item>
+            <title>2026.07.14</title>
+            <pubDate>Wed, 15 Jul 2026 13:41:58 +0100</pubDate>
+            <link>https://belfry.robgough.net</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/robgough/belfry/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>77</sparkle:version>
+            <sparkle:shortVersionString>2026.07.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/robgough/belfry/releases/download/v2026.07.14/Belfry-2026.07.14.zip" length="16242022" type="application/octet-stream" sparkle:edSignature="yFvaMRb5FrsOMlVs4FeaXLFCL6Q0VzpUcV/+bPEF4XMsUifKiBOpvmZy5FqvLnWJIBkf/wljoK4/bYVepMH+DA=="/>
+        </item>
+        <item>
             <title>2026.07.12</title>
             <pubDate>Sat, 11 Jul 2026 04:26:40 +0100</pubDate>
             <link>https://belfry.robgough.net</link>
@@ -21,16 +31,6 @@
             <sparkle:shortVersionString>2026.07.11</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/robgough/belfry/releases/download/v2026.07.11/Belfry-2026.07.11.zip" length="16199278" type="application/octet-stream" sparkle:edSignature="XzEu6dY1/Evd+daWQ5IIEFyXfBCHgtECeSyperM9WLp706mrjH8WSPN/nPIsyQaV+s7qCC/xbmDEvnJ0243MDg=="/>
-        </item>
-        <item>
-            <title>2026.07.10</title>
-            <pubDate>Wed, 08 Jul 2026 03:36:06 +0100</pubDate>
-            <link>https://belfry.robgough.net</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/robgough/belfry/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>51</sparkle:version>
-            <sparkle:shortVersionString>2026.07.10</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/robgough/belfry/releases/download/v2026.07.10/Belfry-2026.07.10.zip" length="16082505" type="application/octet-stream" sparkle:edSignature="TtNssTyeR6v97H7iq+O1n7V3s6690A8eZ8VNbNTtLf/vPXRPJRFbJRHVKBd6NVJcFGxy+Hk79qaRfcTrlHZeCQ=="/>
         </item>
     </channel>
 </rss>
