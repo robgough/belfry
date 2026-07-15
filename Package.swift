@@ -52,7 +52,8 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // Unit tests (macOS host). Depends on the app target so `@testable import
-        // Belfry` can reach internal seams like `LaunchdTmux.runOutcome`.
+        // Belfry` can reach internal seams like `LaunchdTmux.runOutcome` and
+        // `RemoteTmux.prelude` (Sources/BelfryKit compiles into this module too).
         .testTarget(
             name: "BelfryTests",
             dependencies: ["Belfry"],

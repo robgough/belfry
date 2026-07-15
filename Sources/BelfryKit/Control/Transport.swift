@@ -57,13 +57,43 @@ protocol TerminalWorkspace: AnyObject {
 /// reason) when it's genuinely missing. The bare environment also has no
 /// locale: LANG is exported so tmux takes UTF-8 (with `-u` belt-and-braces)
 /// and shells *inside* new sessions inherit it.
+///
+/// PATH needs the same treatment, and for a subtler reason than starting tmux.
+/// The server we exec here *keeps* this environment and hands it to every
+/// `run-shell` it later runs — which is how tmux.conf's plugin lines execute.
+/// TPM, catppuccin et al. all shell out to a bare `tmux`, so under sshd's
+/// default PATH (no /opt/homebrew/bin) they die with "command not found", and
+/// the config silently loads its `set -g` options but none of its plugin UI.
+/// Starting tmux by absolute path fixed the exec but left that trap intact.
+/// So: ask the *login* shell what PATH it would have built — the same one you'd
+/// get by typing `ssh host` and running tmux by hand — and adopt it.
 enum RemoteTmux {
-    static func command(args: String) -> String {
+    /// Everything before the final `exec`: resolve the tmux binary into `$TB`,
+    /// fix the locale, and build the PATH the server will pass to `run-shell`.
+    ///
+    /// The login PATH is captured by running `$SHELL -lc` and echoing `$PATH`
+    /// behind a marker, so a profile that prints banners can't corrupt the
+    /// value (we take the marked line, not all of stdout). It's adopted only if
+    /// tmux actually resolves in it, which rejects a shell whose `$PATH` isn't
+    /// colon-separated — fish joins its list with spaces — and falls back to
+    /// merely making `$TB` reachable. `$TB`'s own directory always goes first so
+    /// a bare `tmux` in a plugin resolves to the *same binary* running the
+    /// server, never a different build earlier on the login PATH.
+    ///
+    /// Internal (not private) so tests can run the fragment and inspect the
+    /// environment it builds.
+    static let prelude: String =
         "TB=$(command -v tmux || echo /opt/homebrew/bin/tmux); "
         + "[ -x \"$TB\" ] || TB=/usr/local/bin/tmux; "
         + "[ -x \"$TB\" ] || { echo 'tmux not found on this host' >&2; exit 127; }; "
         + "export LANG=\"${LANG:-en_US.UTF-8}\"; "
-        + "exec \"$TB\" \(args)"
+        + "LP=$(\"${SHELL:-/bin/sh}\" -lc 'printf \"\\n__belfry_path__%s\\n\" \"$PATH\"' 2>/dev/null"
+        + " | sed -n 's/^__belfry_path__//p' | tail -1); "
+        + "if [ -n \"$LP\" ] && ( PATH=\"$LP\"; command -v tmux >/dev/null 2>&1 ); then "
+        + "PATH=\"${TB%/*}:$LP\"; else PATH=\"${TB%/*}:$PATH\"; fi; export PATH; "
+
+    static func command(args: String) -> String {
+        prelude + "exec \"$TB\" \(args)"
     }
 
     /// Argv-style variant: ssh joins remote-command words with spaces and the
