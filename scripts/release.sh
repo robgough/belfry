@@ -2,7 +2,7 @@
 # Build, sign, notarize and staple a distributable Belfry.app, producing
 # Belfry-<version>.zip ready to attach to a GitHub release.
 #
-# Usage: scripts/release.sh [version] [--skip-notarize]
+# Usage: scripts/release.sh [version] [--skip-notarize] [--skip-appcast]
 #
 # Version defaults to the next calendar release (YYYY.MM.N, N = nth release
 # this month across both platforms), derived from existing v* tags — which
@@ -15,14 +15,22 @@
 #       xcrun notarytool store-credentials belfry-notary \
 #         --apple-id <apple-id> --team-id 5Z5EG95CQL
 #     override the profile name with NOTARY_PROFILE=<name>)
+#
+# Headless (GitHub Actions) instead uses an App Store Connect API key, which
+# needs no keychain profile — set NOTARY_KEY_FILE=<.p8> with NOTARY_KEY_ID and
+# NOTARY_ISSUER. CI also passes --skip-appcast: the Sparkle EdDSA key is
+# deliberately not on GitHub, so the appcast is signed and published from a
+# machine you control (scripts/publish_appcast.sh). See RELEASING.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=""
 SKIP_NOTARIZE=""
+SKIP_APPCAST=""
 for arg in "$@"; do
     case "$arg" in
         --skip-notarize) SKIP_NOTARIZE="--skip-notarize" ;;
+        --skip-appcast) SKIP_APPCAST="1" ;;
         *) VERSION="$arg" ;;
     esac
 done
@@ -46,7 +54,17 @@ if [ "$SKIP_NOTARIZE" != "--skip-notarize" ]; then
     echo "› notarizing…"
     rm -f "$ZIP"
     ditto -c -k --keepParent Belfry.app "$ZIP"
-    xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait
+    # A keychain profile needs a keychain (and, on a Mac, a GUI session to have
+    # created it). CI has neither, so an App Store Connect API key is the
+    # headless path — same notary service, file-based credentials.
+    if [ -n "${NOTARY_KEY_FILE:-}" ]; then
+        NOTARY_AUTH=(--key "$NOTARY_KEY_FILE"
+                     --key-id "${NOTARY_KEY_ID:?NOTARY_KEY_ID is required with NOTARY_KEY_FILE}"
+                     --issuer "${NOTARY_ISSUER:?NOTARY_ISSUER is required with NOTARY_KEY_FILE}")
+    else
+        NOTARY_AUTH=(--keychain-profile "$PROFILE")
+    fi
+    xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait
     xcrun stapler staple Belfry.app
 fi
 
@@ -54,25 +72,16 @@ fi
 rm -f "$ZIP"
 ditto -c -k --keepParent Belfry.app "$ZIP"
 
-# Regenerate the Sparkle appcast (docs/appcast.xml — published by GitHub
-# Pages at belfry.robgough.net/appcast.xml). EdDSA-signs the zip with the
-# private key from the login keychain; commit + push docs/ to publish.
-SPARKLE_BIN=".build/sparkle-tools/bin"
-if [ ! -x "$SPARKLE_BIN/generate_appcast" ]; then
-    echo "› fetching Sparkle tools…"
-    mkdir -p .build/sparkle-tools
-    curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/2.9.3/Sparkle-2.9.3.tar.xz" \
-        | tar -xJ -C .build/sparkle-tools
+# Regenerate the Sparkle appcast (docs/appcast.xml — published by GitHub Pages
+# at belfry.robgough.net/appcast.xml). publish_appcast.sh owns this so the
+# EdDSA signing lives in exactly one place, local and CI alike.
+if [ -n "$SKIP_APPCAST" ]; then
+    APPCAST_NOTE="appcast NOT generated — run scripts/publish_appcast.sh $VERSION on a machine with the Sparkle key"
+else
+    scripts/publish_appcast.sh "$VERSION" --generate-only
+    APPCAST_NOTE="docs/appcast.xml regenerated"
 fi
-STAGE=".build/appcast-stage"
-rm -rf "$STAGE" && mkdir -p "$STAGE"
-cp "$ZIP" "$STAGE/"
-"$SPARKLE_BIN/generate_appcast" "$STAGE" \
-    --download-url-prefix "https://github.com/robgough/belfry/releases/download/v$VERSION/" \
-    --link "https://belfry.robgough.net" \
-    --full-release-notes-url "https://github.com/robgough/belfry/releases" \
-    -o docs/appcast.xml
 
 echo "› gatekeeper assessment:"
 spctl --assess --type execute -vv Belfry.app || true
-echo "✓ $ZIP (+ docs/appcast.xml regenerated)"
+echo "✓ $ZIP ($APPCAST_NOTE)"

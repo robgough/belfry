@@ -20,6 +20,72 @@ The release is a notarized, stapled, universal (arm64 + x86_64) `Belfry.app`,
 attached to a GitHub release, with a Sparkle appcast so existing installs
 (≥ 0.3.0) update themselves.
 
+**Two ways to cut one:** [in CI](#cutting-a-release-in-ci-preferred), which does
+everything but the appcast, or [entirely locally](#cutting-a-release-locally).
+Both end with the same manual step — signing the appcast — because that key
+isn't on GitHub, on purpose.
+
+## Cutting a release in CI (preferred)
+
+1. **Update `CHANGELOG.md`** with a `## [X.Y.Z] — date` section and push it.
+   The workflow refuses to release a version with no section (empty release
+   notes are worse than a failed run).
+
+2. **Actions → Release (macOS) → Run workflow.** Leave the version blank for the
+   next `N` this month, or pass one explicitly. `dry_run` builds, signs and
+   notarizes, then stops without tagging or publishing — use it after touching
+   the workflow, the scripts, or the toolchain.
+
+   It runs the tests, builds universal, signs, notarizes, staples, asserts
+   Gatekeeper accepts the result, tags `vX.Y.Z`, creates the GitHub release with
+   the changelog section as notes, and bumps the Homebrew cask.
+
+3. **Publish the appcast** from your Mac — the run's summary spells this out:
+
+   ```sh
+   git pull && ./scripts/publish_appcast.sh X.Y.Z
+   ```
+
+   It fetches the exact asset CI published (so the signature and length describe
+   the bytes users download), EdDSA-signs it, pushes `docs/appcast.xml`, and asks
+   Pages for a build. Until this runs, Sparkle users stay on the old version;
+   Homebrew users already have the new one.
+
+   Run it from **Terminal.app**, not a Belfry/ssh session: signing reads the key
+   from the login keychain, which needs the GUI (Aqua) security session. Over
+   ssh it fails with "lack of private EdDSA key" — loudly, without pushing.
+
+### Why the Sparkle key isn't in CI
+
+Anyone with repo write can already change the appcast; what stops them shipping
+a malicious auto-update to every install is not being able to *sign* it. Putting
+the EdDSA key in Actions secrets collapses those two defences into one, since any
+workflow change could read it. The Developer ID identity is a lesser risk — it
+signs what Gatekeeper accepts, but nothing auto-installs — so it lives in CI.
+
+### Secrets the workflow needs
+
+Repo → Settings → Secrets and variables → Actions. Also create a `release`
+environment and add yourself as a required reviewer, so a run can't spend the
+signing identity without an explicit approval.
+
+| Secret | What it is |
+|---|---|
+| `MACOS_CERT_P12_BASE64` | Developer ID Application cert **and private key**, exported from Keychain Access as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `MACOS_CERT_PASSWORD` | The password you set on that `.p12` |
+| `ASC_KEY_P8_BASE64` | App Store Connect API key (`.p8`), base64'd. App Store Connect → Users and Access → Integrations → **+**, role *Developer* |
+| `ASC_KEY_ID` | That key's ID |
+| `ASC_ISSUER_ID` | The issuer UUID on the same page |
+| `TAP_PUSH_TOKEN` | Fine-grained PAT, **only** `robgough/homebrew-belfry`, Contents: read+write — for the cask bump |
+
+Notarization uses the API key rather than a `notarytool` keychain profile: a
+profile needs a keychain a GUI session created, which CI hasn't got.
+
+Nothing else is a secret. The keychain the workflow creates is ephemeral with a
+random password, and `GITHUB_TOKEN` covers the tag and the release.
+
+## Cutting a release locally
+
 ## One-time setup (already done on hailmary)
 
 These live in the login keychain and only need doing again on a new machine:
@@ -67,23 +133,32 @@ These live in the login keychain and only need doing again on a new machine:
    release asset URL. It ends with a Gatekeeper assessment that must say
    `accepted / source=Notarized Developer ID`.
 
-4. **Tag, release, publish the appcast:**
+4. **Tag and release** — the asset must exist before the feed points at it:
 
    ```sh
-   git add docs/appcast.xml && git commit -m "Appcast for X.Y.Z"
    git tag -a vX.Y.Z -m "Belfry X.Y.Z"
    git push origin main vX.Y.Z
    gh release create vX.Y.Z Belfry-X.Y.Z.zip --title "Belfry X.Y.Z" \
-       --notes "<changelog section for X.Y.Z>"
+       --notes-file <(./scripts/release_notes.sh X.Y.Z)
    ```
 
-   Order matters: the appcast's enclosure URL points at the release asset,
-   and Sparkle clients read the appcast from
-   `https://belfry.robgough.net/appcast.xml` — which is `docs/appcast.xml`
-   published by GitHub Pages, so it goes live on push (~a minute for the
-   Pages build).
+5. **Publish the appcast:**
 
-5. **Bump the Homebrew cask** (after the release asset exists, since the cask
+   ```sh
+   ./scripts/publish_appcast.sh X.Y.Z
+   ```
+
+   Commits and pushes `docs/appcast.xml`, then asks Pages for a build. Sparkle
+   reads the feed from `https://belfry.robgough.net/appcast.xml`, which is
+   `docs/appcast.xml` published by GitHub Pages — so nothing reaches users until
+   that build lands (~a minute).
+
+   Don't assume the push triggers it. For 2026.07.14 no build ran at all: no
+   incident, no config change, the feed just stayed stale for 25 minutes while
+   `main` had the right file. Hence the explicit request — and a push made by
+   CI's token never triggers one by design.
+
+6. **Bump the Homebrew cask** (after the release asset exists, since the cask
    URL points at it):
 
    ```sh
@@ -97,7 +172,7 @@ These live in the login keychain and only need doing again on a new machine:
    `../homebrew-belfry`, or set `BELFRY_TAP`). Only macOS releases touch the
    cask — skip it for iOS-only releases.
 
-6. **Verify.** Download the asset fresh and check Gatekeeper + the feed:
+7. **Verify.** Download the asset fresh and check Gatekeeper + the feed:
 
    ```sh
    curl -sLO https://github.com/robgough/belfry/releases/latest/download/Belfry-X.Y.Z.zip
