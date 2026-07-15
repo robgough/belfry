@@ -76,31 +76,46 @@ printf '  .p12 password (not echoed): '
 read -rs P12_PASS; echo
 [ -n "$P12_PASS" ] || { bad "an empty password won't import in CI"; exit 1; }
 
-# Validate before uploading: openssl 3 needs -legacy for Keychain's RC2-era p12.
-p12_dump() { openssl pkcs12 -in "$P12_PATH" -passin "pass:$P12_PASS" "$@" 2>/dev/null; }
-P12_ARGS=()
-if ! p12_dump -nokeys -clcerts -noout; then
-    if p12_dump -legacy -nokeys -clcerts -noout; then
-        P12_ARGS=(-legacy)
-    else
-        bad "couldn't open that .p12 — wrong password, or not a PKCS#12 file"
-        exit 1
-    fi
+# Validate before uploading. Note the plain string rather than an array:
+# macOS ships bash 3.2, where expanding an *empty* array under `set -u` is an
+# error — which silently emptied openssl's output and made this script blame a
+# perfectly good .p12. Unquoted, an empty $P12_LEGACY simply disappears.
+P12_LEGACY=""
+p12_dump() { openssl pkcs12 $P12_LEGACY -in "$P12_PATH" -passin "pass:$P12_PASS" "$@" 2>/dev/null; }
+
+# Can we open it at all? openssl 3 needs -legacy for Keychain's RC2-era PKCS#12.
+if p12_dump -nokeys -noout; then
+    ok "opened"
+elif P12_LEGACY="-legacy"; p12_dump -nokeys -noout; then
+    ok "opened (legacy PKCS#12 encryption)"
+else
+    P12_LEGACY=""
+    bad "couldn't open that .p12 — wrong password, or not a PKCS#12 file"
+    exit 1
 fi
-# Key first. Exporting the certificate without its private key is *the* common
-# mistake, and it also empties -clcerts (a cert with no key isn't a client
-# cert) — so a subject check would fire first and blame the wrong thing.
-if p12_dump "${P12_ARGS[@]}" -nocerts -nodes | grep -q "PRIVATE KEY"; then
+
+# Every check below distinguishes "openssl failed" from "the thing isn't there".
+# Conflating them is how this script told Rob he'd exported the wrong thing when
+# he hadn't; an empty result must never be read as a diagnosis on its own.
+if ! p12_dump -nocerts -nodes > "$TMP/key.pem"; then
+    bad "openssl couldn't read the key section of that .p12 (unexpected)"
+    note "Try: openssl pkcs12 $P12_LEGACY -in '$P12_PATH' -nocerts -nodes"
+    exit 1
+fi
+if grep -q "PRIVATE KEY" "$TMP/key.pem"; then
     ok "private key present"
 else
-    bad "no private key in that .p12 — you exported the certificate only"
+    bad "no private key in that .p12 — the certificate was exported on its own"
     note "In Keychain Access, expand the certificate row (▸) and export the"
     note "identity underneath it, not the certificate above."
     exit 1
 fi
 # -print_certs walks the whole chain; a Keychain export carries intermediates,
 # and `openssl x509` would only ever read the first one.
-p12_dump "${P12_ARGS[@]}" -nokeys > "$TMP/certs.pem" 2>/dev/null || true
+if ! p12_dump -nokeys > "$TMP/certs.pem"; then
+    bad "openssl couldn't read the certificates from that .p12 (unexpected)"
+    exit 1
+fi
 SUBJECTS="$(openssl crl2pkcs7 -nocrl -certfile "$TMP/certs.pem" 2>/dev/null \
     | openssl pkcs7 -print_certs -noout 2>/dev/null || true)"
 case "$SUBJECTS" in
@@ -113,7 +128,7 @@ case "$SUBJECTS" in
              | cut -d/ -f1 | sort -u | paste -sd'; ' - || echo nothing)"
        exit 1 ;;
 esac
-EXPIRY="$(p12_dump "${P12_ARGS[@]}" -nokeys | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
+EXPIRY="$(openssl x509 -in "$TMP/certs.pem" -noout -enddate 2>/dev/null | cut -d= -f2)"
 ok "expires: ${EXPIRY:-unknown}"
 
 base64 -i "$P12_PATH" > "$TMP/p12.b64"

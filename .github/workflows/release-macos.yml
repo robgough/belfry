@@ -128,7 +128,11 @@ jobs:
           VERSION: ${{ steps.v.outputs.version }}
           NOTARY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
-        run: scripts/release.sh "$VERSION" --skip-appcast
+        run: |
+          # make_app.sh defaults DEVELOPER_DIR to Xcode-beta, which exists on
+          # hailmary and nowhere else. Point it at whatever the runner selected.
+          export DEVELOPER_DIR="$(xcode-select -p)"
+          scripts/release.sh "$VERSION" --skip-appcast
 
       # Belt and braces: the notarized zip is what users run, so assert it
       # rather than trust the build log.
