@@ -208,6 +208,12 @@ The iOS app ships through TestFlight: archive, upload to App Store Connect,
 wait for processing, add testers. Signing is cloud-managed (automatic) for
 team `5Z5EG95CQL` — no local distribution certificate to look after.
 
+**Two ways to cut one:** [in CI](#cutting-a-build-in-ci-preferred), or
+[locally](#cutting-a-build-locally). CI is preferred — it authenticates with
+the App Store Connect API key rather than Xcode's stored Apple-ID session, so
+it never hits the `Failed to Use Accounts` export failure that a stale local
+session causes.
+
 ## One-time setup
 
 - **App record in App Store Connect** — [appstoreconnect.apple.com](https://appstoreconnect.apple.com)
@@ -223,7 +229,36 @@ team `5Z5EG95CQL` — no local distribution certificate to look after.
   and export `ASC_KEY_ID` / `ASC_ISSUER_ID` with the `.p8` at
   `~/.appstoreconnect/private_keys/`.
 
-## Cutting a build
+## Cutting a build in CI (preferred)
+
+Uses the same `release` environment and the same App Store Connect API key
+secrets (`ASC_KEY_P8_BASE64` / `ASC_KEY_ID` / `ASC_ISSUER_ID`) as the macOS
+workflow — nothing extra to upload.
+
+1. **Update `CHANGELOG.md`** with a `## [X.Y.Z] — date` section and push it (a
+   joint release already has one from the macOS run). The workflow refuses a
+   version with no section.
+
+2. **Actions → Release (iOS) → Run workflow.** Leave the version blank for the
+   next `N` this month, or pass one explicitly — pass the macOS version for a
+   joint release (the workflow sees the tag already exists and won't re-tag).
+   `dry_run` archives and exports the `.ipa` as a build artifact but uploads
+   nothing and doesn't tag — use it after touching the workflow or the
+   toolchain, and to prove the API key can sign before trusting a real upload.
+
+   It runs the tests, archives (arm64 device), signs via cloud-managed
+   automatic signing, uploads to App Store Connect, and tags `vX.Y.Z` unless
+   the tag already exists. Then App Store Connect processes the build (minutes;
+   internal testers get it automatically, external testers need the build added
+   to a group and go through Beta App Review).
+
+> **API key role.** The key was created with the *Developer* role for
+> notarization. Distribution signing only needs to *download* the cert and
+> profile a local run already created, which Developer can do; if a run fails
+> to fetch signing assets or upload, bump the key to *App Manager* in App Store
+> Connect → Users and Access → Integrations.
+
+## Cutting a build locally
 
 1. **Commit first** — the build number is `git rev-list --count HEAD`
    (same scheme as macOS), and App Store Connect insists each upload's

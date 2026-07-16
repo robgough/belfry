@@ -1,0 +1,197 @@
+name: Release (iOS)
+
+# Manual only, same threat model as release-macos.yml:
+#   - Fork PRs can't reach secrets (GitHub blocks it), so a drive-by PR can't
+#     reach the App Store Connect key.
+#   - workflow_dispatch is triggerable only by someone with write access.
+#   - The `release` environment gates it, so an upload to TestFlight takes a
+#     deliberate approval before it can spend the ASC key.
+# There is no iOS equivalent of the withheld Sparkle key: uploading to
+# TestFlight is the whole job, and it's gated by the environment above. A
+# TestFlight build is not an App Store release — external testers still need
+# Beta App Review and a public release still needs a manual submission — so the
+# blast radius of repo-write is smaller here than a signed macOS auto-update.
+#
+# Unlike a local release, CI authenticates purely with the App Store Connect
+# API key (the same one release-macos.yml notarizes with), never Xcode's stored
+# Apple-ID session. That sidesteps the `exportArchive Failed to Use Accounts`
+# failure that dogs local iOS releases when that session goes stale. See
+# RELEASING.md.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "YYYY.MM.N (blank = next N this month; pass the macOS version for a joint release)"
+        required: false
+        type: string
+      dry_run:
+        description: "Archive and export the .ipa, but upload nothing and don't tag"
+        type: boolean
+        default: false
+
+# Least privilege: tag the commit. Nothing else — there's no GitHub release,
+# the build goes to App Store Connect.
+permissions:
+  contents: write
+
+# Two uploads at once would race on the version counter and the tag, and App
+# Store Connect rejects a build number it has already seen.
+concurrency:
+  group: release-ios
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # macOS 26 with the image's own released Xcode, matching release-macos.yml.
+    # The iOS archive goes through XCBuild (a full `xcodebuild archive`, not
+    # `swift build`), but there are no .metal files in-tree — GhosttyKit is a
+    # prebuilt binary target — so the Metal-toolchain trap the macOS build had
+    # to route around never applies here.
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: release
+    steps:
+      # Full history: the build number is `git rev-list --count HEAD` and the
+      # version counter reads v* tags. A shallow clone gets both wrong.
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      # The image default (a released Xcode 26.x) — the configuration the runner
+      # is built and tested around. Released, never a beta: App Store Connect
+      # sometimes rejects binaries built with a beta SDK outside a beta cycle.
+      # DEVELOPER_DIR goes into GITHUB_ENV so release_ios.sh inherits it.
+      - name: Select Xcode (image default, released)
+        run: |
+          set -euo pipefail
+          [ -d /Applications/Xcode.app ] || { echo "::error::no /Applications/Xcode.app"; exit 1; }
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          echo "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          swift --version
+
+      # release_ios.sh runs `xcodegen generate` to produce BelfryiOS.xcodeproj
+      # (which is gitignored). The runner doesn't ship xcodegen.
+      - name: Install xcodegen
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+
+      # Inputs come from a write-access user but still reach a shell: validate
+      # the shape rather than interpolate `${{ }}` into `run:`.
+      - name: Resolve version
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          V="$INPUT_VERSION"
+          if [ -z "$V" ]; then
+            YM="$(date +%Y.%m)"
+            LAST="$(git tag --list "v$YM.*" | sed "s/^v$YM\.//" | sort -n | tail -1)"
+            V="$YM.$(( ${LAST:-0} + 1 ))"
+            echo "› no version given — next is $V"
+          fi
+          case "$V" in
+            [0-9][0-9][0-9][0-9].[0-9][0-9].[0-9]*) ;;
+            *) echo "::error::version '$V' is not YYYY.MM.N"; exit 1 ;;
+          esac
+          # Unlike macOS, an existing tag is fine: it means this is the iOS half
+          # of a joint release the macOS run already tagged. Record it so the Tag
+          # step below doesn't try to push a tag that's already there.
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+            echo "› tag v$V already exists — joint release, won't re-tag"
+            echo "tag_exists=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=0" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      # Empty release notes are worse than a failed run. A joint release already
+      # has its section (macOS added it); an iOS-only one must add it first.
+      - name: Check the changelog has a section for this version
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: scripts/release_notes.sh "$VERSION" > /dev/null
+
+      - name: Test
+        run: swift test
+
+      # notarytool aside, an App Store Connect API key is also how xcodebuild
+      # signs and uploads headlessly: no Xcode Apple-ID session in CI. The .p8
+      # lands in a temp file release_ios.sh reads via ASC_KEY_PATH.
+      #
+      # The key that notarizes was created with the Developer role. Cloud-managed
+      # distribution signing only needs to *download* the Apple Distribution cert
+      # and App Store profile your local runs already created, which a Developer
+      # key can do; if a run ever fails to fetch signing assets or upload, bump
+      # the key to App Manager. Prove it first with dry_run (export-only).
+      - name: Stage App Store Connect credentials
+        env:
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          KEY="$RUNNER_TEMP/asc.p8"
+          printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$KEY"
+          chmod 600 "$KEY"
+          echo "ASC_KEY_PATH=$KEY" >> "$GITHUB_ENV"
+
+      - name: Archive, sign and upload to TestFlight
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        # ASC_KEY_PATH and DEVELOPER_DIR come from earlier steps via GITHUB_ENV.
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            scripts/release_ios.sh "$VERSION" --export-only
+          else
+            scripts/release_ios.sh "$VERSION"
+          fi
+
+      # On a dry run the export lands locally (destination=export); keep it so
+      # there's something to inspect. A real run exports straight to App Store
+      # Connect (destination=upload) and produces no local .ipa.
+      - name: Upload the .ipa
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Belfry-iOS-${{ steps.v.outputs.version }}
+          path: .build/ios/export/Belfry.ipa
+          if-no-files-found: error
+
+      # Only when we actually uploaded and no tag exists yet (an iOS-only or
+      # iOS-leading release). A joint release was already tagged by macOS.
+      - name: Tag
+        if: ${{ !inputs.dry_run && steps.v.outputs.tag_exists == '0' }}
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Belfry $VERSION (iOS)"
+          git push origin "v$VERSION"
+
+      - name: Say what's left to do
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          {
+            echo "## Belfry $VERSION (iOS) uploaded"
+            echo ""
+            echo "Done: archived, signed, uploaded to App Store Connect."
+            echo ""
+            echo "App Store Connect is now processing the build (a few minutes; you"
+            echo "get an email when it's ready). Then, under the app's **TestFlight** tab:"
+            echo ""
+            echo "- **Internal testers** get it automatically once processing finishes."
+            echo "- **External testers** need the build added to a group; the first"
+            echo "  build for them goes through Beta App Review."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc.p8" || true
