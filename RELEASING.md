@@ -252,11 +252,13 @@ workflow — nothing extra to upload.
    internal testers get it automatically, external testers need the build added
    to a group and go through Beta App Review).
 
-> **API key role.** The key was created with the *Developer* role for
-> notarization. Distribution signing only needs to *download* the cert and
-> profile a local run already created, which Developer can do; if a run fails
-> to fetch signing assets or upload, bump the key to *App Manager* in App Store
-> Connect → Users and Access → Integrations.
+> **API key role — must be App Manager.** Cloud-managed *distribution* signing
+> creates/fetches the iOS Distribution cert and App Store profile at export
+> time, which the *Developer* role can't do (the export fails with
+> `exportArchive: Cloud signing permission error`). Set the shared ASC key to
+> *App Manager* in App Store Connect → Users and Access → Integrations → App
+> Store Connect API. A role change leaves the `.p8`/key ID/issuer untouched, so
+> the existing secrets stay valid — no re-upload.
 
 ## Cutting a build locally
 

@@ -120,11 +120,11 @@ jobs:
       # signs and uploads headlessly: no Xcode Apple-ID session in CI. The .p8
       # lands in a temp file release_ios.sh reads via ASC_KEY_PATH.
       #
-      # The key that notarizes was created with the Developer role. Cloud-managed
-      # distribution signing only needs to *download* the Apple Distribution cert
-      # and App Store profile your local runs already created, which a Developer
-      # key can do; if a run ever fails to fetch signing assets or upload, bump
-      # the key to App Manager. Prove it first with dry_run (export-only).
+      # This key must have the App Manager role. Cloud-managed distribution
+      # signing creates/fetches the iOS Distribution cert + App Store profile at
+      # export time, which the Developer role can't do — a dry run fails at
+      # export with "Cloud signing permission error". A role change doesn't touch
+      # the .p8/key ID/issuer, so the existing secrets stay valid.
       - name: Stage App Store Connect credentials
         env:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
