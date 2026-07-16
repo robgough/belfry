@@ -252,13 +252,16 @@ workflow — nothing extra to upload.
    internal testers get it automatically, external testers need the build added
    to a group and go through Beta App Review).
 
-> **API key role — must be App Manager.** Cloud-managed *distribution* signing
-> creates/fetches the iOS Distribution cert and App Store profile at export
-> time, which the *Developer* role can't do (the export fails with
-> `exportArchive: Cloud signing permission error`). Set the shared ASC key to
-> *App Manager* in App Store Connect → Users and Access → Integrations → App
-> Store Connect API. A role change leaves the `.p8`/key ID/issuer untouched, so
-> the existing secrets stay valid — no re-upload.
+> **API key role — must be Admin.** Cloud-managed *distribution* signing at
+> export time needs access to cloud-managed distribution certificates, which
+> **only an Admin-role App Store Connect API key** gets — *Developer* and *App
+> Manager* both fail with `exportArchive: Cloud signing permission error`, and
+> there's no web-UI toggle to grant a lower-role key that access. API-key roles
+> aren't editable, so this means generating a fresh Admin key (App Store Connect
+> → Users and Access → Integrations) and re-setting `ASC_KEY_ID` +
+> `ASC_KEY_P8_BASE64` (the issuer ID is per-account, so it doesn't change). This
+> is the same key macOS notarizes with; the `release` environment's
+> required-reviewer gate is what limits who can spend it.
 
 ## Cutting a build locally
 
