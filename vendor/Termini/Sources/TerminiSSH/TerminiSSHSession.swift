@@ -20,6 +20,11 @@ public struct TerminiSSHConfiguration: Equatable, Sendable {
     // command dies. Default false so existing shell-typed call sites keep
     // their behavior.
     public var useExecRequest: Bool
+    // MARK: Sessionator patch — connection-only sessions. When false,
+    // `connect()` opens no shell/PTY channel at all: the session is a pure
+    // authenticated connection host for `exec(_:)` child channels (see
+    // TerminiSSHExec.swift). Default true preserves existing behavior.
+    public var opensPrimaryChannel: Bool
     public var hostKeyPolicy: TerminiSSHHostKeyPolicy
     public var hostKeyFingerprint: String?
 
@@ -32,6 +37,7 @@ public struct TerminiSSHConfiguration: Equatable, Sendable {
         term: String = "xterm-256color",
         startupCommand: String? = nil,
         useExecRequest: Bool = false,
+        opensPrimaryChannel: Bool = true,
         hostKeyPolicy: TerminiSSHHostKeyPolicy = .trustOnFirstUse,
         hostKeyFingerprint: String? = nil
     ) {
@@ -43,6 +49,7 @@ public struct TerminiSSHConfiguration: Equatable, Sendable {
         self.term = term
         self.startupCommand = startupCommand
         self.useExecRequest = useExecRequest
+        self.opensPrimaryChannel = opensPrimaryChannel
         self.hostKeyPolicy = hostKeyPolicy
         self.hostKeyFingerprint = hostKeyFingerprint
     }
@@ -223,6 +230,17 @@ public final class TerminiSSHSession {
             let connectionChannel = try await bootstrap.connect(host: host, port: configuration.port).get()
             self.connectionChannel = connectionChannel
 
+            // Sessionator patch: connection-only mode stops here — no shell
+            // channel. Auth completes lazily with the first child channel, so
+            // probe with a no-op exec: a bad password / rejected host key
+            // surfaces as `.failed` now rather than on first real use.
+            if !configuration.opensPrimaryChannel {
+                let probe = try await exec("true")
+                _ = try await probe.exitStatus()
+                status = .connected
+                return
+            }
+
             let shellChannel = try await connectionChannel.pipeline
                 .handler(type: NIOSSHHandler.self)
                 .flatMap { sshHandler in
@@ -256,6 +274,12 @@ public final class TerminiSSHSession {
         } catch {
             await handleConnectionError(error)
         }
+    }
+
+    /// Sessionator patch: internal accessor for `exec(_:)` (TerminiSSHExec.swift)
+    /// — the stored property stays private.
+    func currentConnectionChannel() -> Channel? {
+        connectionChannel
     }
 
     public func disconnect() async {

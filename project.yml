@@ -14,6 +14,9 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     from: "1.13.0"
+  Highlightr:
+    url: https://github.com/raspu/Highlightr
+    from: "2.2.0"
 targets:
   BelfryiOS:
     type: application
@@ -38,6 +41,17 @@ targets:
         product: TerminiSSH
       - package: SwiftTerm
         product: SwiftTerm
+      - package: Highlightr
+        product: Highlightr
+    # Downloads land in the app's Documents folder; these two surface it in
+    # the Files app (and let other apps open those documents in place).
+    # They ride a partial Info.plist merged with the generated one because
+    # UIFileSharingEnabled has no INFOPLIST_KEY_* build-setting mapping.
+    info:
+      path: Resources/BelfryiOS-Info.plist
+      properties:
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     preBuildScripts:
       # Guard against a stale generated project: fail the build (with a clear
       # message) if a Swift file was added/renamed under the target's source

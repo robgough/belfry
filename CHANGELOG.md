@@ -2,6 +2,40 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.16] — 2026-07-18
+
+### Added
+
+- **A file browser pane.** A folder button in the toolbar (⌥⌘I on the Mac)
+  opens a right-hand pane rooted at the selected window's working directory —
+  on any host. Browse folders, Quick Look files with space, download remote
+  files to this device (Downloads on the Mac; the Documents folder, visible
+  in the Files app, on iPad/iPhone), and drop files onto the pane to copy
+  them into the shown directory. Remote hosts need nothing new: the Mac
+  rides the existing multiplexed ssh connection, and iOS opens exec channels
+  on a dedicated library-SSH connection per host.
+- **A transfers chip.** Uploads and downloads run in an app-wide transfer
+  center with per-host concurrency limits — close the pane, switch sessions,
+  or (on iOS, within the background grace) leave the app, and the transfer
+  keeps going. A toolbar chip appears while anything is in flight: live
+  progress ring, per-item progress, cancel, and retry.
+- **Code previews that actually show code.** Text-like files open in a
+  syntax-highlighted, line-numbered viewer (Quick Look renders a bare icon
+  for most source files); images, PDFs and media still use Quick Look. Big
+  files show in full — colouring stops after the first 5,000 lines and the
+  rest renders plain.
+- **Git, at a glance.** Inside a repo the pane gains a Files/Changes toggle,
+  a branch chip with ahead/behind counts, and editor-style status badges on
+  listed files. The Changes tab lists the working tree's modifications;
+  tapping one shows its diff with a three-way view — Latest (the file now),
+  Split (side by side), or Inline — and "All Changes" shows the whole diff.
+  Diffs are read with `--no-ext-diff`, so a difftastic-flavoured gitconfig
+  on the host can't garble them.
+- **Rendered HTML previews.** HTML files preview in a real web view with a
+  Rendered/Source toggle. Relative assets — images, stylesheets, scripts —
+  are resolved by WebKit and fetched from the host on demand, so a page and
+  its neighbours render properly even over ssh.
+
 ## [2026.07.15] — 2026-07-15
 
 macOS release.

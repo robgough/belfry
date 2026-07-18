@@ -24,6 +24,12 @@ let package = Package(
             url: "https://github.com/sparkle-project/Sparkle",
             from: "2.9.3"
         ),
+        // Syntax highlighting for the file pane's code previews (highlight.js
+        // via JavaScriptCore — works on both platforms, no network).
+        .package(
+            url: "https://github.com/raspu/Highlightr",
+            from: "2.2.0"
+        ),
     ],
     targets: [
         // The macOS app. `Sources/BelfryKit` is the platform-neutral core,
@@ -36,6 +42,7 @@ let package = Package(
                 .product(name: "Termini", package: "Termini"),
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Highlightr", package: "Highlightr"),
             ],
             path: "Sources",
             exclude: ["BelfryAskpass", "BelfryiOS"],

@@ -16,6 +16,7 @@ struct IOSRootView: View {
     // Start with the sidebar shown: prominentDetail otherwise opens on an
     // empty detail pane with the tree hidden behind the toggle button.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var showsFilePane = false
     /// iPad sidebar behaviour (see `SidebarLayout`). Defaults to keeping the
     /// tree docked; the toolbar toggle switches to the over-the-terminal overlay.
     @AppStorage("belfry.ipadSidebarLayout") private var sidebarLayout: SidebarLayout = .keepOpen
@@ -42,6 +43,13 @@ struct IOSRootView: View {
                 // with an empty title, reserving a tall empty band above the
                 // terminal. Inline collapses the bar to a single row.
                 .navigationBarTitleDisplayMode(.inline)
+                // Trailing column on a regular-width iPad; SwiftUI presents it
+                // as a sheet in compact widths (iPhone) automatically.
+                .inspector(isPresented: $showsFilePane) {
+                    FileBrowserPane(hosts: model.hosts, selection: selection,
+                                    transferCenter: model.transferCenter)
+                        .inspectorColumnWidth(min: 280, ideal: 340)
+                }
                 .toolbar {
                     // Same iTunes-style "now playing" readout as the Mac's title
                     // bar (shared BelfryKit view); renders nothing until a window
@@ -50,6 +58,18 @@ struct IOSRootView: View {
                     ToolbarItem(placement: .principal) {
                         NowPlayingView(hosts: model.hosts, selection: selection,
                                        prominent: horizontalSizeClass == .regular)
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        TransfersButton(center: model.transferCenter)
+                    }
+                    if selection != nil {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button {
+                                showsFilePane.toggle()
+                            } label: {
+                                Image(systemName: "folder")
+                            }
+                        }
                     }
                     if selectedWorkspace != nil {
                         ToolbarItem(placement: .primaryAction) {

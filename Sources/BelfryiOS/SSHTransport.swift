@@ -15,6 +15,12 @@ import UIKit
 @MainActor
 final class SSHHostTransport: HostTransport {
     let saved: SavedHost
+    /// Dedicated connection for file operations, opened lazily on first use.
+    /// Owned by the transport (host lifetime), so transfers survive control
+    /// reconnects and background suspensions of the tmux plane.
+    private lazy var fileSession = SSHFileSession { [saved] in
+        Self.fileSessionConfiguration(saved: saved)
+    }
 
     init(saved: SavedHost) {
         self.saved = saved
@@ -24,6 +30,10 @@ final class SSHHostTransport: HostTransport {
     var savedHost: SavedHost? { saved }
     /// Hooks management shells out over ssh on macOS; not wired up on iOS yet.
     var hooksManager: (any HooksManaging)? { nil }
+
+    func makeFileBrowser() -> (any FileBrowsing)? {
+        RemoteFileBrowser(runner: fileSession)
+    }
 
     func makeControlChannel(controlSessionName: String) -> any ControlChannel {
         SSHControlChannel(configuration: sshConfiguration(
@@ -42,7 +52,25 @@ final class SSHHostTransport: HostTransport {
     }
 
     func cleanUpOnRemoval() {
+        fileSession.shutdown()
         KeychainStore.deleteSecret(for: saved.alias)
+    }
+
+    /// Connection-only session (no shell channel): every file operation is an
+    /// exec child channel on it. Secret comes from the Keychain at connect
+    /// time, and TOFU state is shared with the control connection, so this
+    /// opens silently once the host has connected at all.
+    private static func fileSessionConfiguration(saved: SavedHost) -> TerminiSSHConfiguration {
+        let secret = KeychainStore.secret(for: saved.alias) ?? ""
+        let usesKey = saved.authMethod == SavedHost.authMethodKey
+        return TerminiSSHConfiguration(
+            host: saved.hostname ?? saved.alias,
+            port: saved.port ?? 22,
+            username: saved.username ?? "",
+            password: usesKey ? "" : secret,
+            privateKeyPEM: usesKey ? secret : nil,
+            opensPrimaryChannel: false,
+            hostKeyPolicy: .trustOnFirstUse)
     }
 
     /// PATH/locale handling for the non-interactive exec shell lives in the

@@ -132,3 +132,22 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
   anything else via `UTType(mimeType:)`), and the view implements `copy(_:)`
   plus ⌘C in `performKeyEquivalent`, both driving ghostty's
   `copy_to_clipboard` binding action.
+
+- **`Sources/TerminiSSH/TerminiSSHExec.swift` (new) + `TerminiSSHSession.swift` —
+  exec channels on a live connection.** Upstream opens exactly one session
+  channel per connection (the shell / tmux exec) and exposes no way to run
+  further commands over it. SSH multiplexes arbitrarily many session channels
+  over one authenticated connection, and Belfry's file browsing needs that:
+  directory listings, `cat`-style downloads and streamed uploads next to the
+  long-lived channel with no second connect and no re-auth. Added
+  `TerminiSSHSession.exec(_:)` — a **no-PTY** exec request on a fresh child
+  channel — returning a `TerminiSSHExecProcess` handle: streamed stdout
+  (`AsyncThrowingStream`), backpressured stdin `write`, stdin half-close
+  (`finishInput()` → SSH channel EOF, so a remote `cat > file` completes),
+  capped stderr tail, real exit status, and `cancel()`. Also added
+  `TerminiSSHConfiguration.opensPrimaryChannel` (default true): when false,
+  `connect()` opens no shell channel at all — the session is a pure
+  connection host for exec channels; auth is validated eagerly by probing
+  `exec("true")`. Handler callbacks stay on the event loop and meet the async
+  consumer only through lock-guarded state, so transfers are immune to
+  main-thread stalls. Additive; existing call sites are untouched.

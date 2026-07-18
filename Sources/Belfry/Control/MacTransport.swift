@@ -112,6 +112,15 @@ extension TmuxTransport: HostTransport {
     func cleanUpOnRemoval() {
         // Nothing stored: keys/passwords live in the user's ~/.ssh setup.
     }
+
+    func makeFileBrowser() -> (any FileBrowsing)? {
+        switch self {
+        case .local:
+            return LocalFileBrowser()
+        case .ssh(let alias):
+            return RemoteFileBrowser(runner: SubprocessScriptRunner.ssh(alias: alias))
+        }
+    }
 }
 
 extension TerminiLocalPTYWorkspace: TerminalWorkspace {

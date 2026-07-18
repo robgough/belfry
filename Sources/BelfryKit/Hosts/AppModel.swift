@@ -12,6 +12,10 @@ final class AppModel {
 
     private(set) var hosts: [HostModel]
 
+    /// File uploads/downloads across all hosts. App-lifetime so transfers
+    /// survive the file pane closing and selection changes.
+    let transferCenter = TransferCenter()
+
     /// Sessions/windows pinned to the top of the sidebar. New pins append;
     /// the user can rearrange by dragging.
     private(set) var pins: [PinnedItem]

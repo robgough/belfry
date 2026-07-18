@@ -63,6 +63,7 @@ struct RootView: View {
     /// title mid-reconnect — that's the moment you most want to know which
     /// session you were looking at.
     @State private var lastReadout: CachedReadout?
+    @State private var showsFilePane = false
 
     private struct CachedReadout: Equatable {
         let selection: WindowSelection
@@ -125,6 +126,28 @@ struct RootView: View {
             TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize)
                 .background(AppTheme.windowBackground)
                 .terminalAttachments(hosts: model.hosts, selection: selection)
+                // The file pane rides in an inspector so the warm terminal
+                // surfaces stay mounted beside it, never re-parented.
+                .inspector(isPresented: $showsFilePane) {
+                    FileBrowserPane(hosts: model.hosts, selection: selection,
+                                    transferCenter: model.transferCenter)
+                        .inspectorColumnWidth(min: 260, ideal: 320, max: 560)
+                }
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        TransfersButton(center: model.transferCenter)
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showsFilePane.toggle()
+                        } label: {
+                            Label("Files", systemImage: "folder")
+                        }
+                        .disabled(selection == nil)
+                        .keyboardShortcut("i", modifiers: [.command, .option])
+                        .help("Browse the selected window's working directory (⌥⌘I)")
+                    }
+                }
                 // The jump bar (a menu of every window on every host) and the
                 // now-playing readout that stands in for the native title:
                 // title-styled two-line text with the host name tinted and the

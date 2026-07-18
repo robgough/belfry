@@ -160,9 +160,15 @@ protocol HostTransport {
     /// The host is being removed from the app: delete any stored credentials
     /// (iOS: the Keychain entry; macOS: nothing — auth lives in ~/.ssh).
     func cleanUpOnRemoval()
+
+    /// File operations on this host (the file browser pane + transfers), or
+    /// nil where the transport can't provide them yet.
+    func makeFileBrowser() -> (any FileBrowsing)?
 }
 
 extension HostTransport {
     /// Remote transports have no local server to pre-flight.
     func prepareServer(controlSessionName: String, forceCreate: Bool) async -> ServerReadiness { .ready }
+
+    func makeFileBrowser() -> (any FileBrowsing)? { nil }
 }
