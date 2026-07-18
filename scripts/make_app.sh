@@ -34,7 +34,7 @@ MACOS_MIN="14.0"
 build() {  # build <extra swift build args…>
     local log; log="$(mktemp -t belfry-build)"
     if ! swift build -c "$CONFIG" "$@" >"$log" 2>&1; then
-        echo "✗ swift build ${*} failed:" >&2
+        echo "✗ swift build ${*:-} failed:" >&2
         cat "$log" >&2
         rm -f "$log"
         exit 1
