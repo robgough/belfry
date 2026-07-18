@@ -228,6 +228,19 @@ struct RootView: View {
                 ClaudeBadge(state: readout.claudeState, title: readout.claudeTitle)
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        // The LCD: the old lozenge's rounded panel, drawn ourselves (the
+        // system glass capsule is hidden) so it reads as a readout, not a
+        // button, and the chip gets real padding instead of clipping.
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(AppTheme.sidebarPanel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(.quaternary, lineWidth: 1)
+        )
         .frame(maxWidth: 460)
         .fixedSize(horizontal: false, vertical: true)
         .hoverHint((readout ?? staleReadout)?.hint ?? "")
