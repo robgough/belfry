@@ -476,7 +476,7 @@ private struct HostHeader: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(host.displayName)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(AppTheme.hostTint(isLocal: host.transport.isLocal))
                     .textCase(nil)
                 if let subtitle {
                     Text(subtitle)
@@ -774,10 +774,22 @@ private struct PinnedRow: View {
             .onHover { pinHovered = $0 }
             .hoverHint("Unpin “\(title)”")
             VStack(alignment: .leading, spacing: 1.5) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    // Window pins and session pins read differently — a
+                    // session pin follows its session's *active* window — so
+                    // say which kind this is (same glyph vocabulary as the
+                    // toolbar's window switcher).
+                    Image(systemName: resolved.pin.windowID != nil ? "macwindow" : "rectangle.stack")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .hoverHint(resolved.pin.windowID != nil
+                                   ? "Pinned window"
+                                   : "Pinned session — shows its active window")
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
                 if let claudeTitle {
                     Text(claudeTitle)
                         .lineLimit(1)
@@ -785,7 +797,7 @@ private struct PinnedRow: View {
                         .foregroundStyle(AppTheme.accent)
                         .hoverHint("Claude Code session “\(claudeTitle)”")
                 }
-                Text(contextLine)
+                contextText
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -830,16 +842,24 @@ private struct PinnedRow: View {
     }
 
     /// "host · session" (window pins) or "host" (session pins), with a
-    /// why-it's-dimmed note appended while unresolved.
-    private var contextLine: String {
-        var parts: [String] = [resolved.host?.displayName ?? resolved.pin.hostID]
+    /// why-it's-dimmed note appended while unresolved. The host segment is
+    /// tinted local/remote (an unresolvable host keeps the row's secondary).
+    private var contextText: Text {
+        var text = Text(resolved.host?.displayName ?? resolved.pin.hostID)
+        if let host = resolved.host {
+            text = text.foregroundStyle(AppTheme.hostTint(isLocal: host.transport.isLocal))
+        }
+        var rest: [String] = []
         if resolved.pin.windowID != nil {
-            parts.append(resolved.session?.name ?? resolved.pin.sessionName)
+            rest.append(resolved.session?.name ?? resolved.pin.sessionName)
         }
         if let note = staleNote {
-            parts.append(note)
+            rest.append(note)
         }
-        return parts.joined(separator: " · ")
+        if !rest.isEmpty {
+            text = text + Text(" · " + rest.joined(separator: " · "))
+        }
+        return text
     }
 
     /// The working directory on its own line (~-abbreviated); hidden while a

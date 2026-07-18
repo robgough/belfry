@@ -23,6 +23,13 @@ enum AppTheme {
     static var statusGood: Color { color(resolved.palette[safe: 2] ?? 0x40A02B) }
     static var statusWarn: Color { color(resolved.palette[safe: 3] ?? 0xDF8E1D) }
 
+    /// Machine-name tints from the terminal palette (ANSI cyan/magenta):
+    /// wherever the chrome names a host, the colour says where it is — cyan
+    /// for this Mac, magenta for a remote machine — without needing a label.
+    static var hostLocal: Color { color(resolved.palette[safe: 6] ?? 0x179299) }
+    static var hostRemote: Color { color(resolved.palette[safe: 5] ?? 0x8839EF) }
+    static func hostTint(isLocal: Bool) -> Color { isLocal ? hostLocal : hostRemote }
+
     /// Faint panel behind each host's sessions/windows, so a machine's group
     /// reads as one block against the sidebar background.
     static var sidebarPanel: Color {
