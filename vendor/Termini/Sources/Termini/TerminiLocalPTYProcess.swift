@@ -53,13 +53,19 @@ public final class TerminiLocalPTYProcess: @unchecked Sendable {
     public var onExit: (@Sendable (Int32) -> Void)?
 
     private let queue = DispatchQueue(label: "dev.arach.Termini.local-pty")
+    // Sessionator patch: marks `queue` so terminate() can detect it is already
+    // running on it. Instance-owned key, so one process's teardown can never
+    // mistake another instance's queue for its own.
+    private let queueKey = DispatchSpecificKey<Void>()
     private var masterFileDescriptor: Int32 = -1
     private var childPID: pid_t = 0
     private var readSource: DispatchSourceRead?
     private var processSource: DispatchSourceProcess?
     private var lastRequestedSize: Size = .default
 
-    public init() {}
+    public init() {
+        queue.setSpecific(key: queueKey, value: ())
+    }
 
     deinit {
         terminate()
@@ -190,14 +196,26 @@ public final class TerminiLocalPTYProcess: @unchecked Sendable {
     }
 
     public func terminate() {
-        queue.sync {
-            guard childPID > 0 else {
-                cleanup()
-                return
-            }
-
-            _ = kill(childPID, SIGTERM)
+        // Sessionator patch: a dispatch-source handler on `queue` can hold the
+        // last strong reference to this object, so deinit — and this call — can
+        // run *on* `queue`. `queue.sync` from there is a same-queue dispatch_sync,
+        // which libdispatch traps as a client bug (EXC_BREAKPOINT), silently
+        // killing the whole app (seen after every wake-from-sleep once dead SSH
+        // control channels tore down). Run inline when already on the queue.
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            terminateOnQueue()
+        } else {
+            queue.sync { self.terminateOnQueue() }
         }
+    }
+
+    private func terminateOnQueue() {
+        guard childPID > 0 else {
+            cleanup()
+            return
+        }
+
+        _ = kill(childPID, SIGTERM)
     }
 
     private func configureSources() {

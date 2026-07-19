@@ -91,6 +91,20 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
   `Belfry_2026-07-04-*.hang` reports: main thread parked in `__ulock_wait2`
   under `processRemoteOutput` with ghostty's io/renderer threads idle.
 
+- **`TerminiLocalPTYProcess.swift` — terminate() safe on its own queue (silent
+  wake-crash fix).** A dispatch-source handler running on the process's private
+  serial `queue` can end up holding the last strong reference to the object (the
+  handler's `guard let self` temporary), so `deinit` — which calls `terminate()` —
+  runs *on* `queue`. Upstream's `terminate()` unconditionally did `queue.sync`,
+  a same-queue dispatch_sync that libdispatch traps as a client bug
+  (EXC_BREAKPOINT in `__DISPATCH_WAIT_FOR_QUEUE__`). GhosttyKit's bundled
+  Sentry/Breakpad handler then swallowed the crash (minidump to
+  `~/.local/state/ghostty/crash/`, `_exit(6)`) — no macOS crash report, the app
+  just vanished. Triggered reliably after wake/DarkWake, when dead SSH control
+  channels made every host tear down its PTY process at once. Fix: the queue is
+  tagged with an instance-owned `DispatchSpecificKey`; `terminate()` runs its
+  body inline when already on the queue. Search for `queueKey`.
+
 - **`TerminiLocalPTYProcess.swift` — coalesced PTY reads.** `drainOutput()` emitted
   one `onOutput` callback (→ one main-thread hop + one terminal feed) per 4 KB
   `read()`. All bytes readable in a drain pass are now batched into a single

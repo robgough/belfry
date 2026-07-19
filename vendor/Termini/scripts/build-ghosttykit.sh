@@ -9,6 +9,42 @@ GHOSTTY_DIR="${GHOSTTY_DIR:-${REPO_ROOT}/vendor/ghostty}"
 GHOSTTY_REPO="${GHOSTTY_REPO:-https://github.com/ghostty-org/ghostty.git}"
 GHOSTTY_REF="${GHOSTTY_REF:-}"
 GHOSTTY_OPTIMIZE="${GHOSTTY_OPTIMIZE:-ReleaseFast}"
+# zig 0.15.2 (ghostty's pinned toolchain) cannot parse the tbd stubs in the
+# Xcode 26.x SDK — every libSystem symbol comes up undefined at link time,
+# starting with the build runner itself. Use an older SDK (Command Line Tools
+# keeps them) instead, delivered via an `xcrun --show-sdk-path` shim: both
+# zig's own SDK detection and ghostty's build system go through xcrun (zig
+# ignores $SDKROOT), and zig's `--sysroot` must NOT be used — ghostty already
+# emits absolute SDK-prefixed -L/-F paths, which a sysroot would prefix a
+# second time. Harmless once the toolchain understands the current SDK.
+GHOSTTY_SYSROOT="${GHOSTTY_SYSROOT:-}"
+if [[ -z "${GHOSTTY_SYSROOT}" ]]; then
+  for sdk in /Library/Developer/CommandLineTools/SDKs/MacOSX15*.sdk; do
+    [[ -d "${sdk}" ]] && GHOSTTY_SYSROOT="${sdk}"
+  done
+fi
+if [[ -n "${GHOSTTY_SYSROOT}" ]]; then
+  SHIM_DIR="$(mktemp -d -t ghosttykit-xcrun-shim)"
+  trap 'rm -rf "${SHIM_DIR}"' EXIT
+  # Only intercept *macOS* SDK path queries — iOS slices must still resolve
+  # the real iPhoneOS/simulator SDKs through the genuine xcrun.
+  cat > "${SHIM_DIR}/xcrun" <<SHIM
+#!/bin/bash
+want_path=0; sdk=""; prev=""
+for a in "\$@"; do
+  [ "\$a" = "--show-sdk-path" ] && want_path=1
+  [ "\$prev" = "--sdk" ] && sdk="\$a"
+  prev="\$a"
+done
+if [ "\$want_path" = 1 ] && { [ -z "\$sdk" ] || [ "\$sdk" = "macosx" ]; }; then
+  echo "${GHOSTTY_SYSROOT}"
+  exit 0
+fi
+exec /usr/bin/xcrun "\$@"
+SHIM
+  chmod +x "${SHIM_DIR}/xcrun"
+  export PATH="${SHIM_DIR}:${PATH}"
+fi
 SHOULD_FETCH=0
 
 usage() {
@@ -100,8 +136,13 @@ update_checkout
 
 (
   cd "${GHOSTTY_DIR}"
+  # -Dsentry=false: ghostty's bundled Sentry/Breakpad otherwise installs an
+  # in-process Mach exception handler that swallows *all* host-app crashes
+  # (minidump to ~/.local/state/ghostty/crash + _exit(exception_type), no macOS
+  # crash report). The embedding host wants normal ReportCrash behavior.
   zig build \
     -Dapp-runtime=none \
+    -Dsentry=false \
     -Demit-xcframework=true \
     -Demit-macos-app=false \
     -Demit-exe=false \
