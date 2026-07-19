@@ -2,6 +2,15 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.17] — 2026-07-19
+
+macOS release of the 2026.07.16 feature set (below): the file browser pane,
+background transfers, syntax-highlighted code previews, rendered HTML
+previews, and the git Changes view. Mac-specific trimmings: ⌥⌘I toggles the
+pane, files reveal in Finder / open with their default app on local hosts,
+downloads land in ~/Downloads, and the preview opens as a large resizable
+sheet that closes with space, Quick Look-style.
+
 ## [2026.07.16] — 2026-07-18
 
 ### Added
