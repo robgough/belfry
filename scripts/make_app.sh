@@ -84,7 +84,22 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 cp "$BIN" "$APP/Contents/MacOS/Belfry"
 # Sibling of the main binary so SSHControl.askpassEnvironment() finds it.
 cp "$ASKPASS" "$APP/Contents/MacOS/belfry-askpass"
-cp Resources/Belfry.icns "$APP/Contents/Resources/Belfry.icns"
+# Compile the Icon Composer icon: Assets.car carries the Liquid Glass icon
+# (macOS 26+) and actool renders AppIcon.icns as the flat fallback for older
+# systems. Quiet on success, same rationale as build() above.
+ACTOOL_LOG="$(mktemp -t belfry-actool)"
+if ! xcrun actool Resources/AppIcon.icon --compile "$APP/Contents/Resources" \
+        --platform macosx --minimum-deployment-target "$MACOS_MIN" \
+        --app-icon AppIcon --include-all-app-icons \
+        --output-partial-info-plist /dev/null >"$ACTOOL_LOG" 2>&1 \
+    || [ ! -f "$APP/Contents/Resources/Assets.car" ] \
+    || [ ! -f "$APP/Contents/Resources/AppIcon.icns" ]; then
+    echo "✗ actool failed to compile Resources/AppIcon.icon:" >&2
+    cat "$ACTOOL_LOG" >&2
+    rm -f "$ACTOOL_LOG"
+    exit 1
+fi
+rm -f "$ACTOOL_LOG"
 
 # Embed Sparkle.framework (SPM links it via @rpath but doesn't bundle it).
 SPARKLE_FW="$(find .build/artifacts -type d -path "*/macos-*/Sparkle.framework" | head -1)"
@@ -106,7 +121,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>Belfry</string>
     <key>CFBundleExecutable</key><string>Belfry</string>
     <key>CFBundleIdentifier</key><string>net.robgough.belfry</string>
-    <key>CFBundleIconFile</key><string>Belfry</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${BUILD_NUM}</string>

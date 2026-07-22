@@ -31,9 +31,9 @@ targets:
       # launch via CoreText (no Info.plist UIAppFonts needed).
       - path: Resources/Fonts
         buildPhase: resources
-      # App icon (belfry-1024.png flattened onto the theme background —
-      # iOS icons must not carry an alpha channel).
-      - path: Resources/BelfryiOS.xcassets
+      # App icon: Icon Composer bundle (Liquid Glass on iOS 26+; actool
+      # renders the flattened legacy variants for iOS 17–18 automatically).
+      - path: Resources/AppIcon.icon
     dependencies:
       - package: Termini
         product: Termini

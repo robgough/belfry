@@ -2,6 +2,15 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.18] — 2026-07-22
+
+### Changed
+
+- **A new app icon**, on both platforms. Built with Icon Composer, so
+  macOS 26 and iOS 26 render it as a layered Liquid Glass icon with the
+  system's tinted and clear variants; older systems get a flat render of
+  the same artwork. The website favicons match.
+
 ## [2026.07.17] — 2026-07-19
 
 macOS release of the 2026.07.16 feature set (below): the file browser pane,
