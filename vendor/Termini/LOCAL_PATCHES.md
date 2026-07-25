@@ -165,3 +165,58 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
   `exec("true")`. Handler callbacks stay on the event loop and meet the async
   consumer only through lock-guarded state, so transfers are immune to
   main-thread stalls. Additive; existing call sites are untouched.
+
+## Patches added 2026-07-25 (ghostty-on-iOS + touch UX)
+
+- **`vendor/ghostty` `build.zig.zon` — libxev bumped for iOS mach-port
+  wakeups (THE blank-terminal fix).** The pinned libxev snapshot never
+  delivered wakeups to ghostty's renderer thread on iOS, so surfaces drew
+  their background and no cells — the long-standing "empty glyph atlas"
+  symptom that kept Belfry iOS on SwiftTerm. Bumped to libxev 7bf2b2f9 (the
+  same revision Remux's ghostty fork ships). Rebuild with
+  `scripts/build-ghosttykit.sh` — requires zig 0.15.2 exactly (ghostty's
+  pinned toolchain; Homebrew's 0.16 refuses).
+
+- **`TerminiRuntime.swift` — HOME/XDG_* pointed at the app container before
+  `ghostty_init` (iOS).** Without them ghostty logs `error.NoHomeDir` and has
+  no writable config/cache/state dirs. Same setup Ghostty's own iOS app does.
+
+- **`TerminiRuntime.swift` — renderer-health action handled (iOS).**
+  `GHOSTTY_ACTION_RENDERER_HEALTH` unhealthy → the surface view rebuilds its
+  GPU surface over the same UIView (`rendererHealthChanged`); the host's
+  `onRendererRebuild` asks tmux for a repaint (winsize nudge). Terminal state
+  doesn't survive (libghostty couples terminal to surface) but the session
+  recovers instead of freezing.
+
+- **`TerminiSurfaceView_iOS.swift` — host-owned view support.** The class is
+  now `open` with a public designated `init()` (shared runtime) and public
+  `bind(controller:)`, so Belfry can subclass it (gestures, focus discipline,
+  UITextInput shim) and keep one persistent view per session re-parented
+  across SwiftUI remounts. `autoFocusOnAttach` (default true) lets hosts stop
+  `didMoveToWindow` from summoning the keyboard.
+
+- **`TerminiSurfaceView_iOS.swift` — render gating (iOS twin of the macOS
+  `isRenderVisible` patch).** Hidden warm surfaces pause their CADisplayLink,
+  mark the renderer occluded, skip per-output draws, and do one catch-up draw
+  on reveal.
+
+- **`TerminiSurfaceView_iOS.swift` — synthesized keys, touch scroll, row
+  readback, prewarm.** `sendKey(TerminiTerminalKey)` synthesizes HID-keycode
+  press/release pairs through `ghostty_surface_key` (mode-correct arrows/esc/
+  tab/etc for the on-screen dock and cursor trackpad); `scrollWheel(deltaY:at:)`
+  sends precision wheel deltas at a touch position (single-finger scrollback);
+  `rowText(at:)` reads the touched viewport row + column via
+  `ghostty_surface_read_text` (long-press link/path detection — iOS builds
+  don't export `quicklook_word`); `SurfaceContainerView.prewarmRenderer()`
+  warms Metal + font atlas at launch on a throwaway offscreen surface.
+
+- **`Sources/TerminiSSH/TerminiSSHForward.swift` (new) — SSH local forwards
+  (`ssh -L` equivalent).** `openLocalForward(targetHost:targetPort:)` binds a
+  NIOPosix listener on 127.0.0.1:0 and bridges each accepted connection to a
+  `direct-tcpip` child channel with half-close propagation. Two hard-won
+  details: the listener must be NIOPosix, not NIOTS (Network.framework
+  delivers a phantom EOF after the first read on loopback accepts, poisoning
+  the tunnel), and forwarded writes flush per-write (channelReadComplete
+  doesn't reliably propagate out of NIOSSH child channels). Live-verified by
+  `Tests/TerminiSSHTests/LocalForwardLiveTests.swift` (env-gated; skips
+  without TERMINI_LIVE_SSH_* configuration).

@@ -33,6 +33,20 @@ final class TerminiRuntime: ObservableObject {
         }
         #endif
 
+        #if canImport(UIKit)
+        // Belfry patch (iOS): ghostty resolves HOME/XDG_* during init for its
+        // config and font/cache subsystems. Unlike macOS, an iOS process may
+        // not expose HOME to getenv, and ghostty logs `error.NoHomeDir` and
+        // runs with no writable state — one observed casualty is a blank
+        // glyph atlas. Point everything at the app container before init
+        // (same setup Ghostty's own iOS app performs).
+        let containerHome = NSHomeDirectory()
+        setenv("HOME", containerHome, 0)   // don't clobber if the OS set one
+        setenv("XDG_CONFIG_HOME", containerHome + "/Library/Application Support", 1)
+        setenv("XDG_CACHE_HOME", containerHome + "/Library/Caches", 1)
+        setenv("XDG_STATE_HOME", containerHome + "/Library/Application Support", 1)
+        #endif
+
         // libghostty requires global init prior to any other calls.
         let initResult = ghostty_init(0, nil)
         guard initResult == GHOSTTY_SUCCESS else {
@@ -125,7 +139,24 @@ final class TerminiRuntime: ObservableObject {
         target: ghostty_target_s,
         action: ghostty_action_s
     ) -> Bool {
-        // For now we acknowledge all actions without special handling.
+        // Belfry patch: renderer health recovery (iOS). A Metal renderer that
+        // reports unhealthy never comes back on its own; the surface view
+        // rebuilds its GPU surface over the same UIView (see
+        // `rendererHealthChanged` in TerminiSurfaceView_iOS.swift).
+        #if canImport(UIKit)
+        if action.tag == GHOSTTY_ACTION_RENDERER_HEALTH,
+           target.tag == GHOSTTY_TARGET_SURFACE,
+           let surface = target.target.surface,
+           let userdata = ghostty_surface_userdata(surface) {
+            let healthy = action.action.renderer_health == GHOSTTY_RENDERER_HEALTH_HEALTHY
+            let view = Unmanaged<SurfaceContainerView>.fromOpaque(userdata).takeUnretainedValue()
+            DispatchQueue.main.async {
+                view.rendererHealthChanged(healthy: healthy)
+            }
+            return true
+        }
+        #endif
+        // All other actions are acknowledged without special handling.
         return true
     }
 

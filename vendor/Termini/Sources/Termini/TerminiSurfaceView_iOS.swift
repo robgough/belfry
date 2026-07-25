@@ -49,7 +49,9 @@ public struct TerminiSurfaceView: UIViewRepresentable {
 }
 
 /// UIView subclass that hosts the Ghostty surface and forwards basic iOS input.
-public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestureRecognizerDelegate {
+/// Belfry patch: `open` (was `public final`) so the app layer can subclass it
+/// with its touch UX (focus discipline, gestures, text-input shims).
+open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestureRecognizerDelegate {
     private let runtime: TerminiRuntime
     private var surface: ghostty_surface_t?
     /// Set once the surface has been created and ticked. Until then, terminal
@@ -103,9 +105,41 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
         }
     }
 
+    // MARK: Belfry patch — keyboard discipline + render gating.
+    /// When false, attaching to a window does not grab first responder (which
+    /// would summon the system keyboard). Hosts with manual keyboard UX
+    /// (Belfry: keyboard appears on tap or toolbar toggle only) opt out;
+    /// upstream call sites keep the auto-focus default.
+    public var autoFocusOnAttach = true
+
+    /// iOS twin of the macOS `isRenderVisible` patch: a warm-but-hidden
+    /// surface keeps absorbing output (terminal state stays current) but
+    /// stops drawing — no display-link frames, renderer marked occluded —
+    /// with one catch-up draw on reveal.
+    public var isRenderVisible = true {
+        didSet {
+            guard oldValue != isRenderVisible else { return }
+            renderLink?.isPaused = !isRenderVisible
+            if let surface {
+                ghostty_surface_set_occlusion(surface, isRenderVisible)
+            }
+            if isRenderVisible, needsDrawOnReveal {
+                needsDrawOnReveal = false
+                drawAfterRemoteOutput()
+            }
+        }
+    }
+    private var needsDrawOnReveal = false
+
+    /// The renderer reported unhealthy and the surface was rebuilt (fresh
+    /// terminal state — libghostty has no terminal/surface split, so content
+    /// is lost). The host should ask the remote to repaint, e.g. a tmux
+    /// winsize nudge.
+    public var onRendererRebuild: (() -> Void)?
+
     public var hasText: Bool { true }
 
-    public override var inputView: UIView? {
+    open override var inputView: UIView? {
         showsSystemKeyboard ? nil : suppressedInputView
     }
 
@@ -117,6 +151,21 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
         self.runtime = runtime
         // Ghostty expects a non-zero host view so its internal IOSurface layer can size itself.
         super.init(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        commonInit()
+    }
+
+    // MARK: Belfry patch — public creation for host-owned views.
+    /// Hosts that keep one persistent surface per session and re-parent it
+    /// across SwiftUI remounts (Belfry's warm session cache) own the view
+    /// directly instead of letting a representable create it. Public and
+    /// designated so app-side subclasses (gesture/input layers) can chain to it.
+    public init() {
+        self.runtime = .shared
+        super.init(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        commonInit()
+    }
+
+    private func commonInit() {
         updateBackgroundColor()
         isOpaque = true
         contentScaleFactor = UIScreen.main.scale
@@ -125,11 +174,11 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
+    public required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    open override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard terminalAppearance.theme == nil else { return }
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
@@ -143,27 +192,29 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
         }
     }
 
-    public override func didMoveToWindow() {
+    open override func didMoveToWindow() {
         super.didMoveToWindow()
         createSurfaceIfNeeded()
         synchronizeGhosttyLayerGeometry()
         updateSurfaceSize()
         startRenderLoopIfNeeded()
+        renderLink?.isPaused = !isRenderVisible   // Belfry patch: honour gating from the start
+        guard autoFocusOnAttach else { return }   // Belfry patch: manual keyboard UX
         Task { @MainActor in
             _ = self.becomeFirstResponder()
         }
     }
 
-    public override func layoutSubviews() {
+    open override func layoutSubviews() {
         super.layoutSubviews()
         synchronizeGhosttyLayerGeometry()
         updateSurfaceSize()
     }
 
-    public override var canBecomeFirstResponder: Bool { true }
+    open override var canBecomeFirstResponder: Bool { true }
 
     @discardableResult
-    public override func becomeFirstResponder() -> Bool {
+    open override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         setSurfaceFocus(true)
         runtime.keyboardDidChange()
@@ -171,13 +222,13 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
     }
 
     @discardableResult
-    public override func resignFirstResponder() -> Bool {
+    open override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
         setSurfaceFocus(false)
         return ok
     }
 
-    public override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    open override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         _ = becomeFirstResponder()
     }
@@ -246,14 +297,14 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
         super.pressesCancelled(presses, with: event)
     }
 
-    public func insertText(_ text: String) {
+    open func insertText(_ text: String) {
         if controller?.forwardInputText(text) == true {
             return
         }
         sendText(text)
     }
 
-    public func deleteBackward() {
+    open func deleteBackward() {
         if controller?.forwardDeleteBackward() == true {
             return
         }
@@ -269,11 +320,13 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
 
     @objc
     private func drawFrame() {
-        guard let surface else { return }
+        guard let surface, isRenderVisible else { return }
         ghostty_surface_draw(surface)
     }
 
-    func bind(controller: TerminiTerminalController?) {
+    // Belfry patch: public — host-owned views (created via `init()`) bind
+    // their controller directly rather than through the representable.
+    public func bind(controller: TerminiTerminalController?) {
         self.controller = controller
         controller?.bind(
             processRemoteOutput: { [weak self] data in
@@ -314,6 +367,9 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
 
         guard let created = ghostty_surface_new(app, &cfg) else { return }
         surface = created
+        if !isRenderVisible {                     // Belfry patch: born-hidden warm surface
+            ghostty_surface_set_occlusion(created, false)
+        }
         synchronizeGhosttyLayerGeometry()
         setSurfaceFocus(true)
         updateSurfaceSize()
@@ -405,6 +461,10 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
 
     private func drawAfterRemoteOutput() {
         guard let surface else { return }
+        guard isRenderVisible else {              // Belfry patch: gate hidden draws
+            needsDrawOnReveal = true
+            return
+        }
         ghostty_surface_refresh(surface)
         ghostty_surface_draw(surface)
         reportDiagnostics()
@@ -652,6 +712,178 @@ public final class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, 
         return ghostty_input_mods_e(rawValue: raw)
     }
 }
+
+// MARK: Belfry patch — synthesized keys, touch scrollback, row readback,
+// renderer-health recovery, and a launch-time renderer prewarm. All additive.
+
+/// Special keys a host can synthesize without a hardware keyboard. Routed
+/// through `ghostty_surface_key` so mode-dependent encodings (DECCKM
+/// application cursor keys, kitty keyboard protocol) come out right — raw
+/// escape strings would not.
+public enum TerminiTerminalKey: Sendable {
+    case arrowUp, arrowDown, arrowLeft, arrowRight
+    case escape, tab, enter, backspace
+    case pageUp, pageDown, home, end
+
+    /// iOS HID usage codes — the same values `UIKey.keyCode` carries, which is
+    /// what the hardware-key path already feeds ghostty.
+    var hidKeycode: UInt32 {
+        switch self {
+        case .arrowUp: 82
+        case .arrowDown: 81
+        case .arrowLeft: 80
+        case .arrowRight: 79
+        case .escape: 41
+        case .tab: 43
+        case .enter: 40
+        case .backspace: 42
+        case .pageUp: 75
+        case .pageDown: 78
+        case .home: 74
+        case .end: 77
+        }
+    }
+
+    /// Text payload for keys that carry one on hardware keyboards (UIKey
+    /// reports "\t"/"\r"); nil for pure control keys.
+    var textPayload: String? {
+        switch self {
+        case .tab: "\t"
+        case .enter: "\r"
+        default: nil
+        }
+    }
+}
+
+extension SurfaceContainerView {
+    /// Synthesize a press+release pair for a special key, as if typed on a
+    /// hardware keyboard.
+    public func sendKey(_ key: TerminiTerminalKey) {
+        sendKeyEvent(key, action: GHOSTTY_ACTION_PRESS)
+        sendKeyEvent(key, action: GHOSTTY_ACTION_RELEASE)
+    }
+
+    private func sendKeyEvent(_ key: TerminiTerminalKey, action: ghostty_input_action_e) {
+        guard let surface else { return }
+        var keyEvent = ghostty_input_key_s(
+            action: action,
+            mods: GHOSTTY_MODS_NONE,
+            consumed_mods: GHOSTTY_MODS_NONE,
+            keycode: key.hidKeycode,
+            text: nil,
+            unshifted_codepoint: 0,
+            composing: false
+        )
+        if action == GHOSTTY_ACTION_PRESS, let text = key.textPayload {
+            text.utf8CString.withUnsafeBufferPointer { buffer in
+                keyEvent.text = buffer.baseAddress
+                ghostty_surface_key(surface, keyEvent)
+            }
+        } else {
+            ghostty_surface_key(surface, keyEvent)
+        }
+    }
+
+    /// Report a touch location as the mouse position (view points). Wheel
+    /// events that follow are routed by ghostty to the pane under this point
+    /// when the app has mouse reporting on (tmux `mouse on`).
+    public func reportTouchLocation(_ point: CGPoint) {
+        guard let surface else { return }
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        ghostty_surface_mouse_pos(surface, point.x * scale, point.y * scale, GHOSTTY_MODS_NONE)
+    }
+
+    /// Precision scroll by pixel deltas (view points; converted to pixels).
+    /// Positive dy scrolls content down (finger moving down reveals older
+    /// output, matching UIScrollView direction handled by the caller).
+    public func scrollWheel(deltaY points: CGFloat, at point: CGPoint) {
+        guard let surface else { return }
+        reportTouchLocation(point)
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        // Bit 0 = precision deltas (pixels, not wheel ticks) — see the macOS
+        // scroll-semantics patch in LOCAL_PATCHES.md.
+        ghostty_surface_mouse_scroll(surface, 0, Double(points * scale),
+                                     ghostty_input_scroll_mods_t(0b0000_0001))
+    }
+
+    /// The visible text of the terminal row under `point`, plus the character
+    /// column the point falls in. Used for long-press link/path detection —
+    /// iOS builds of libghostty don't export `quicklook_word`, so the host
+    /// reads the row and tokenizes around the column itself.
+    public func rowText(at point: CGPoint) -> (text: String, column: Int)? {
+        guard let surface else { return nil }
+        let size = ghostty_surface_size(surface)
+        guard size.columns > 0, size.rows > 0,
+              size.cell_width_px > 0, size.cell_height_px > 0,
+              bounds.width > 0, bounds.height > 0 else { return nil }
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        let row = min(max(Int(point.y * scale) / Int(size.cell_height_px), 0), Int(size.rows) - 1)
+        let column = min(max(Int(point.x * scale) / Int(size.cell_width_px), 0), Int(size.columns) - 1)
+
+        var text = ghostty_text_s(
+            tl_px_x: 0, tl_px_y: 0, offset_start: 0, offset_len: 0,
+            text: nil, text_len: 0)
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                x: 0, y: UInt32(row)),
+            bottom_right: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                x: UInt32(Int(size.columns) - 1), y: UInt32(row)),
+            rectangle: false)
+        guard ghostty_surface_read_text(surface, selection, &text), let base = text.text else {
+            return nil
+        }
+        defer { ghostty_surface_free_text(surface, &text) }
+        let data = Data(bytes: base, count: Int(text.text_len))
+        return (String(decoding: data, as: UTF8.self), column)
+    }
+
+    /// Renderer health flipped (delivered via the runtime action callback).
+    /// On unhealthy: rebuild the GPU surface over the same UIView. libghostty
+    /// couples terminal state to the surface, so content is lost — the host's
+    /// `onRendererRebuild` asks the remote (tmux) to repaint.
+    func rendererHealthChanged(healthy: Bool) {
+        guard !healthy, let old = surface else { return }
+        surface = nil
+        surfaceIOReady = false
+        pendingOutput = Data()
+        // Free on the output-feed queue: any already-enqueued feed block
+        // captured the old pointer, and the serial queue guarantees this free
+        // runs after those blocks complete.
+        outputFeedQueue.async {
+            ghostty_surface_free(old)
+        }
+        createSurfaceIfNeeded()
+        onRendererRebuild?()
+    }
+
+    /// Warm the renderer once at launch (Remux-style mitigation): create a
+    /// small offscreen surface, tick + draw it so libghostty initializes its
+    /// Metal state and font atlas off the critical path, then let it go.
+    @MainActor
+    public static func prewarmRenderer() {
+        let view = SurfaceContainerView()
+        view.frame = CGRect(x: 0, y: 0, width: 96, height: 96)
+        view.isRenderVisible = true
+        view.createSurfaceIfNeeded()
+        prewarmedView = view
+        // A couple of runloop turns for the initial tick + appearance, one
+        // explicit draw, then release. 3s is arbitrary but far past first use.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let surface = view.surface {
+                ghostty_surface_draw(surface)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            prewarmedView = nil
+        }
+    }
+}
+
+/// Keeps the prewarm surface alive long enough to actually render once.
+@MainActor
+private var prewarmedView: SurfaceContainerView?
 
 private extension TerminiTerminalTheme {
     var ghosttyColorScheme: ghostty_color_scheme_e {

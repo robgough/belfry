@@ -20,14 +20,19 @@ let localGhosttyKitAbsolutePath = packageRoot.appending(path: localGhosttyKitRel
 let bundledGhosttyKitExists = fileManager.fileExists(atPath: localGhosttyKitAbsolutePath)
 // 0.1.6 tracks Ghostty main (07d31666e, Jun 2026) plus Termini embedding
 // APIs (`write_to_host_cb`, `ghostty_surface_process_output`, font config
-// setters). Upstream already includes the iOS Metal surface-attach fixes.
+// setters), plus one dependency bump over the TermBridgeKit 0.1.6 release:
+// libxev 7bf2b2f9, whose mach-port wakeup fix is what makes ghostty's
+// renderer thread run on iOS at all (without it surfaces draw background
+// and no cells). Hosted on Belfry's own releases because we have no push
+// access to arach/TermBridgeKit; rebuild with scripts/build-ghosttykit.sh
+// (zig 0.15.2) and repackage with scripts/package-ghosttykit-release.sh.
 //
 // Local development: drop the rebuilt xcframework into
 // `vendor/ghostty/macos/GhosttyKit.xcframework` and the local-vendor
 // preference above will use it. The URL below is consumed when no local
 // vendor is present (CI, downstream packages).
-let releaseGhosttyKitURL = "https://github.com/arach/TermBridgeKit/releases/download/0.1.6/GhosttyKit.xcframework.zip"
-let releaseGhosttyKitChecksum = "7265c68e6e2120d8e3ed9bd9299177f6de9312fde492f7923e2af67b23ba1339"
+let releaseGhosttyKitURL = "https://github.com/robgough/belfry/releases/download/ghosttykit-0.1.6-libxev.1/GhosttyKit.xcframework.zip"
+let releaseGhosttyKitChecksum = "31035fc6de873c8294badacbe536f87d94ae38c761f81955d1aa500de5df8535"
 
 let ghosttyKitTarget: Target =
     if bundledGhosttyKitExists {
@@ -93,6 +98,9 @@ let package = Package(
             dependencies: [
                 "Termini",
                 .product(name: "NIOCore", package: "swift-nio"),
+                // NIOPosix: loopback listener for local forwards (NIOTS
+                // fabricates EOFs on loopback accepts — see TerminiSSHForward).
+                .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
             ]
