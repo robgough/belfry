@@ -11,9 +11,6 @@ options:
 packages:
   Termini:
     path: vendor/Termini
-  SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm
-    from: "1.13.0"
   Highlightr:
     url: https://github.com/raspu/Highlightr
     from: "2.2.0"
@@ -39,8 +36,6 @@ targets:
         product: Termini
       - package: Termini
         product: TerminiSSH
-      - package: SwiftTerm
-        product: SwiftTerm
       - package: Highlightr
         product: Highlightr
     # Downloads land in the app's Documents folder; these two surface it in

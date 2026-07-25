@@ -37,6 +37,9 @@ final class Transfer: Identifiable {
     /// would pass to `download(offset:)`.
     var bytesTransferred: Int64 = 0
     var state: State = .queued
+    /// Uploads only: the final absolute remote path, once known. Attachment
+    /// sends read this to type the path at the prompt.
+    var finalRemotePath: String?
 
     /// The actual work, kept so `retry` can re-run it. Not observed.
     @ObservationIgnored fileprivate var work: (@Sendable (Transfer) async throws -> Void)?
@@ -126,8 +129,9 @@ final class TransferCenter {
             .map(Int64.init)
         transfer.work = { [weak self] transfer in
             let progress = await self?.progressReporter(for: transfer)
-            _ = try await browser.upload(localURL: localURL, toDirectory: directory,
-                                         progress: progress ?? { _, _ in })
+            let remotePath = try await browser.upload(localURL: localURL, toDirectory: directory,
+                                                      progress: progress ?? { _, _ in })
+            await MainActor.run { transfer.finalRemotePath = remotePath }
         }
         enqueue(transfer)
         return transfer

@@ -17,6 +17,8 @@ struct IOSRootView: View {
     // empty detail pane with the tree hidden behind the toggle button.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showsFilePane = false
+    /// Saved commands (shortcut palette) — app-lifetime, persisted.
+    @State private var shortcutStore = ShortcutStore()
     /// iPad sidebar behaviour (see `SidebarLayout`). Defaults to keeping the
     /// tree docked; the toolbar toggle switches to the over-the-terminal overlay.
     @AppStorage("belfry.ipadSidebarLayout") private var sidebarLayout: SidebarLayout = .keepOpen
@@ -39,6 +41,16 @@ struct IOSRootView: View {
         } detail: {
             TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize)
                 .background(AppTheme.windowBackground)
+                // Floating keyboard dock (sticky ctrl / esc / tab / palette /
+                // keyboard). Rides the keyboard safe area, so it sits just
+                // above the keyboard when it's up and the bottom edge when not.
+                .overlay(alignment: .bottom) {
+                    if let workspace = selectedWorkspace as? BelfrySSHWorkspace {
+                        TerminalDockLayer(workspace: workspace, store: shortcutStore,
+                                          context: dockContext(for: workspace))
+                            .id(ObjectIdentifier(workspace))
+                    }
+                }
                 // Without this the detail column defaults to a large-title bar
                 // with an empty title, reserving a tall empty band above the
                 // terminal. Inline collapses the bar to a single row.
@@ -89,6 +101,7 @@ struct IOSRootView: View {
         .tint(AppTheme.accent)
         .preferredColorScheme(AppTheme.colorScheme)
         .task {
+            Haptics.prewarm()
             model.startAll()
             #if DEBUG
             // Harness hook: BELFRY_TEST_AUTOSELECT=1 selects the first window
@@ -127,6 +140,27 @@ struct IOSRootView: View {
               let session = host.store.sessions.first(where: { $0.windows.contains { $0.id == sel.windowID } })
         else { return nil }
         return host.surfaceStore.workspace(for: session.id)
+    }
+
+    /// Host/session context for the dock's attachments + previews. nil (no
+    /// paperclip, no previews) when the host can't browse files.
+    private func dockContext(for workspace: BelfrySSHWorkspace) -> DockContext? {
+        guard let sel = selection,
+              let host = model.hosts.first(where: { $0.id == sel.hostID }),
+              let session = host.store.sessions.first(where: { $0.windows.contains { $0.id == sel.windowID } }),
+              let browser = host.transport.makeFileBrowser(),
+              let transport = host.transport as? SSHHostTransport
+        else { return nil }
+        let window = session.windows.first { $0.id == sel.windowID }
+        let path = window?.currentPath ?? ""
+        return DockContext(
+            hostID: host.id, sessionName: session.name,
+            currentDirectory: path.isEmpty ? nil : path,
+            browser: browser,
+            transferCenter: model.transferCenter, workspace: workspace,
+            openForward: { host, port in
+                try await transport.openLocalForward(targetHost: host, targetPort: port)
+            })
     }
 
     /// iPad-only options menu. Distinct from the split view's built-in sidebar

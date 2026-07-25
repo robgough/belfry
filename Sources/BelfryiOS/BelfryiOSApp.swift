@@ -1,5 +1,6 @@
 import CoreText
 import SwiftUI
+import Termini
 import UIKit
 
 @main
@@ -10,6 +11,10 @@ struct BelfryiOSApp: App {
 
     init() {
         Self.registerBundledFonts()
+        // Warm libghostty's Metal state + font atlas off the critical path so
+        // the first real surface paints promptly (and any font/atlas issue
+        // surfaces at launch, not mid-connect).
+        SurfaceContainerView.prewarmRenderer()
     }
 
     /// Make the bundled Maple Mono NF faces available to UIFont (runtime

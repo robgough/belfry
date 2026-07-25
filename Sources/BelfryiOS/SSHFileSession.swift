@@ -28,6 +28,21 @@ final class SSHFileSession: RemoteScriptRunning {
         }
     }
 
+    /// SSH local forward on this host connection (long-press localhost
+    /// previews). Rides the same lazily-connected session as file transfers,
+    /// so an open preview keeps working while the tmux plane reconnects.
+    func openLocalForward(targetHost: String, targetPort: Int) async throws -> TerminiSSHLocalForward {
+        do {
+            return try await connectedSession().openLocalForward(
+                targetHost: targetHost, targetPort: targetPort)
+        } catch {
+            // Same quiet-death retry as `run(script:)`.
+            session = nil
+            return try await connectedSession().openLocalForward(
+                targetHost: targetHost, targetPort: targetPort)
+        }
+    }
+
     func shutdown() {
         let session = session
         self.session = nil
