@@ -2,6 +2,43 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.19] — 2026-07-25
+
+iOS/iPadOS TestFlight release: the terminal is now rendered by libghostty —
+the same engine as the Mac app — plus a set of touch-terminal features.
+
+### Added
+
+- **A floating keyboard dock.** Glass capsules above the keyboard: a
+  one-shot sticky Ctrl (arm it, type a letter, get the control chord), Esc,
+  Tab, saved commands, attachments, and a keyboard toggle.
+- **Saved commands.** A palette of tap-to-send commands grouped into
+  collections — starters for the shell (^C, ^L, ^R…), Claude Code
+  (/resume, /compact, /clear, /model, interrupt) and git, plus your own.
+  Open it from the dock's bolt key or by holding ctrl; edit under the gear.
+- **A cursor trackpad.** Long-press the terminal (or the spacebar's
+  floating cursor) and drag to steer with real arrow keys — analog speed
+  ramp, held-direction auto-repeat, and haptic ticks. TUI navigation
+  without hunting for arrow keys.
+- **Attachments.** Send photos, files, or the clipboard to the connected
+  host: annotate screenshots with PencilKit, then one tap uploads them to
+  `~/.cache/belfry/attachments/…` and types the shell-escaped paths at the
+  prompt — made for handing screenshots to Claude Code.
+- **Long-press previews.** Hold a `localhost:PORT` URL in terminal output
+  to open it in an in-app browser over a real SSH tunnel (live-reload dev
+  servers work); hold a file path to download and Quick Look it; regular
+  links open in Safari.
+
+### Changed
+
+- **libghostty renders the terminal on iOS**, replacing SwiftTerm — same
+  fonts, colours, and escape-sequence behaviour as the Mac app, with GPU
+  rendering and warm-surface battery gating. (The long-standing blank-
+  surface bug turned out to be ghostty's renderer thread never waking on
+  iOS; fixed with a libxev update in our GhosttyKit build.)
+- Single-finger scrolling now drives ghostty's native scroll path, so it
+  works in tmux copy-mode and plain shells alike.
+
 ## [2026.07.18] — 2026-07-22
 
 ### Changed
