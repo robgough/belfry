@@ -67,6 +67,51 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
     /// workspace to the SSH channel.
     var onHardwareKeyBytes: ((Data) -> Void)?
 
+    // MARK: System-priority key commands
+
+    /// Esc, Return, Tab and the arrows are focus-system keys on iPadOS: with
+    /// a hardware keyboard the system consumes them for focus navigation
+    /// BEFORE press delivery — Esc pops focus (the terminal visibly loses the
+    /// keyboard), Return "activates" the focused item and never reaches the
+    /// app. Key commands with `wantsPriorityOverSystemBehavior` are the
+    /// documented override; the system calls these actions *instead of*
+    /// delivering the press, so there's no double-send with `pressesBegan`
+    /// (which still handles paging, backspace, ctrl chords and alt-meta).
+    private static let priorityKeys: [String: TerminalKey] = [
+        UIKeyCommand.inputEscape: .escape,
+        "\r": .enter,
+        "\t": .tab,
+        UIKeyCommand.inputUpArrow: .arrowUp,
+        UIKeyCommand.inputDownArrow: .arrowDown,
+        UIKeyCommand.inputLeftArrow: .arrowLeft,
+        UIKeyCommand.inputRightArrow: .arrowRight,
+    ]
+
+    override var keyCommands: [UIKeyCommand]? {
+        var commands = Self.priorityKeys.keys.map { input in
+            let command = UIKeyCommand(input: input, modifierFlags: [],
+                                       action: #selector(handlePriorityKey(_:)))
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+        // Shift+Tab is a focus key too; terminals expect backtab (CSI Z).
+        let backtab = UIKeyCommand(input: "\t", modifierFlags: .shift,
+                                   action: #selector(handlePriorityKey(_:)))
+        backtab.wantsPriorityOverSystemBehavior = true
+        commands.append(backtab)
+        return commands
+    }
+
+    @objc private func handlePriorityKey(_ command: UIKeyCommand) {
+        guard let input = command.input else { return }
+        if input == "\t", command.modifierFlags.contains(.shift) {
+            onHardwareKeyBytes?(Data([0x1B, 0x5B, 0x5A]))   // CSI Z
+            return
+        }
+        guard let key = Self.priorityKeys[input] else { return }
+        sendKey(key.terminiKey)
+    }
+
     /// Auto-repeat for claimed presses. UIKit only repeats keys that reach
     /// the text-input system; anything we claim in `pressesBegan` (arrows,
     /// backspace, ctrl chords…) would otherwise fire exactly once no matter

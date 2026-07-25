@@ -2,6 +2,17 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.22] — 2026-07-25
+
+### Fixed
+
+- **Enter and Esc reach the terminal from hardware keyboards.** iPadOS
+  reserves Esc, Return, Tab and the arrows for its keyboard focus system
+  and consumes them before apps see the key press — Esc was popping focus
+  off the terminal, Return was "activating" nothing. The terminal now
+  registers priority key commands (`wantsPriorityOverSystemBehavior`) so
+  those keys are delivered to it instead. Shift+Tab sends backtab.
+
 ## [2026.07.21] — 2026-07-25
 
 ### Added
