@@ -90,7 +90,39 @@ enum StarterShortcuts {
             Shortcut(id: uuid("000000000303"), title: "Log", steps: [.text("git log --oneline -20", submit: true)]),
         ])
 
-    static let all: [ShortcutCollection] = [shell, claude, git]
+    /// Standard Vim operations that are awkward on touch keyboards. Every
+    /// shortcut leads with Esc so it lands in normal mode no matter what
+    /// state the tap interrupts (insert, visual, half-typed command).
+    static let vim = ShortcutCollection(
+        id: uuid("000000000004"),
+        title: "Vim",
+        symbol: "pencil",
+        shortcuts: [
+            Shortcut(id: uuid("000000000401"), title: "Save :w",
+                     steps: [.key(.escape), .text(":w", submit: true)]),
+            Shortcut(id: uuid("000000000402"), title: "Save+Quit :wq",
+                     steps: [.key(.escape), .text(":wq", submit: true)]),
+            Shortcut(id: uuid("000000000403"), title: "Quit :q!",
+                     steps: [.key(.escape), .text(":q!", submit: true)]),
+            Shortcut(id: uuid("000000000404"), title: "Undo u",
+                     steps: [.key(.escape), .text("u", submit: false)]),
+            Shortcut(id: uuid("000000000405"), title: "Redo ^R",
+                     steps: [.key(.escape), .control("^R")]),
+            Shortcut(id: uuid("000000000406"), title: "Delete Line dd",
+                     steps: [.key(.escape), .text("dd", submit: false)]),
+            Shortcut(id: uuid("000000000407"), title: "Yank yy",
+                     steps: [.key(.escape), .text("yy", submit: false)]),
+            Shortcut(id: uuid("000000000408"), title: "Put p",
+                     steps: [.key(.escape), .text("p", submit: false)]),
+            Shortcut(id: uuid("000000000409"), title: "Search /",
+                     steps: [.key(.escape), .text("/", submit: false)]),
+            Shortcut(id: uuid("00000000040A"), title: "Top gg",
+                     steps: [.key(.escape), .text("gg", submit: false)]),
+            Shortcut(id: uuid("00000000040B"), title: "End G",
+                     steps: [.key(.escape), .text("G", submit: false)]),
+        ])
+
+    static let all: [ShortcutCollection] = [shell, claude, git, vim]
 }
 
 // MARK: - Store
