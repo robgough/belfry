@@ -19,6 +19,11 @@ struct TerminalDockLayer: View {
     @State private var showsAttachments = false
     @State private var staging = AttachmentStaging()
     @State private var preview: PresentedPreview?
+    /// Arrow-key capsule toggled from the dock's d-pad key; sticky across
+    /// launches — someone living in vim/tmux wants it every session. (The
+    /// cursor trackpad — long-press-drag on the terminal or the spacebar
+    /// floating cursor — remains the gesture alternative.)
+    @AppStorage("belfry.dockArrows") private var showsArrows = false
 
     private var attachmentAction: (() -> Void)? {
         context == nil ? nil : { showsAttachments = true }
@@ -33,11 +38,16 @@ struct TerminalDockLayer: View {
                 }
                 .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
             }
+            if showsArrows {
+                arrowPad
+                    .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
+            }
             dock
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
         .animation(.spring(duration: 0.25), value: showsPalette)
+        .animation(.spring(duration: 0.25), value: showsArrows)
         .sheet(isPresented: $showsSettings) {
             ShortcutSettingsSheet(store: store)
         }
@@ -97,6 +107,12 @@ struct TerminalDockLayer: View {
                     workspace.sendKey(.tab)
                     Haptics.tap()
                 }
+                DockKey(label: {
+                    Image(systemName: "dpad").font(.system(size: 15, weight: .semibold))
+                }, isActive: showsArrows) {
+                    showsArrows.toggle()
+                    Haptics.selection()
+                }
             }
             Spacer(minLength: 0)
             DockCapsule {
@@ -133,6 +149,58 @@ struct TerminalDockLayer: View {
                 }
             }
         }
+    }
+
+    /// Held-to-repeat arrow keys, in reading order left/up/down/right so the
+    /// vertical pair sits together (tmux scroll, shell history).
+    private var arrowPad: some View {
+        DockCapsule {
+            RepeatingDockKey(symbol: "arrow.left") { workspace.sendKey(.arrowLeft) }
+            RepeatingDockKey(symbol: "arrow.up") { workspace.sendKey(.arrowUp) }
+            RepeatingDockKey(symbol: "arrow.down") { workspace.sendKey(.arrowDown) }
+            RepeatingDockKey(symbol: "arrow.right") { workspace.sendKey(.arrowRight) }
+        }
+    }
+}
+
+/// A dock key that fires on touch-down and auto-repeats while held — arrows
+/// are held keys, not tapped ones. (Tap-style DockKey fires on touch-up.)
+private struct RepeatingDockKey: View {
+    let symbol: String
+    let send: () -> Void
+
+    @State private var repeatTask: Task<Void, Never>?
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(repeatTask == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(AppTheme.accent))
+            .frame(width: 44, height: 38)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in beginIfNeeded() }
+                    .onEnded { _ in end() }
+            )
+            .onDisappear { end() }
+    }
+
+    private func beginIfNeeded() {
+        guard repeatTask == nil else { return }
+        send()
+        Haptics.tap()
+        repeatTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            while !Task.isCancelled {
+                send()
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+        }
+    }
+
+    private func end() {
+        repeatTask?.cancel()
+        repeatTask = nil
     }
 }
 

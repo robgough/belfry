@@ -201,9 +201,17 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
   on reveal.
 
 - **`TerminiSurfaceView_iOS.swift` — synthesized keys, touch scroll, row
-  readback, prewarm.** `sendKey(TerminiTerminalKey)` synthesizes HID-keycode
-  press/release pairs through `ghostty_surface_key` (mode-correct arrows/esc/
-  tab/etc for the on-screen dock and cursor trackpad); `scrollWheel(deltaY:at:)`
+  readback, prewarm.** `sendKey(TerminiTerminalKey)` synthesizes press/release
+  pairs through `ghostty_surface_key` (mode-correct arrows/esc/tab/etc for the
+  on-screen dock and cursor trackpad). Keycodes are **macOS virtual keycodes
+  (kVK_*), not HID usages**: ghostty's `keycodes.zig` uses the mac `native`
+  column on iOS too, so `UIKey.keyCode` HID values resolve to the wrong
+  physical key (Esc→semicolon, arrows→keypad digits) and text-less events
+  encode nothing. The hardware forward path translates via
+  `ghosttyKeycode(forHID:)` for the same reason. `pasteText(_:)` exposes
+  ghostty's clipboard-semantics text path (`ghostty_surface_text` →
+  `textCallback`): bracketed-paste wrapping when mode 2004 is on, newline →
+  '\r' filtering when off. `scrollWheel(deltaY:at:)`
   sends precision wheel deltas at a touch position (single-finger scrollback);
   `rowText(at:)` reads the touched viewport row + column via
   `ghostty_surface_read_text` (long-press link/path detection — iOS builds

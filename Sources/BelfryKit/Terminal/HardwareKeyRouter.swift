@@ -56,9 +56,15 @@ enum HardwareKeyRouter {
         // Modifier keys themselves (LeftControl 0xE0 … RightGUI 0xE7).
         if (0xE0...0xE7).contains(keyCode) { return .passToSystem }
 
-        // Command shortcuts belong to the system (⌘Tab, ⌘H, …) except paste.
+        // Command shortcuts belong to the system (⌘Tab, ⌘H, …) with two
+        // exceptions: paste, and ⌘. as Escape — the iPadOS convention, and
+        // the only Esc many iPad Magic Keyboards have (no function row).
         if modifiers.contains(.command) {
-            return keyCode == 25 /* V */ && modifiers == .command ? .paste : .passToSystem
+            if modifiers == .command {
+                if keyCode == 25 { return .paste }               // V
+                if keyCode == 55 { return .sendKey(.escape) }    // .
+            }
+            return .passToSystem
         }
 
         // Special keys: deterministic synthesis, modifiers or not. (Shift/Ctrl

@@ -1,4 +1,5 @@
 import Foundation
+import GameController
 import SwiftUI
 import Termini
 import TerminiSSH
@@ -273,17 +274,23 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         }
     }
 
+    /// Selecting a window should move key input to the terminal whenever that
+    /// can't cost screen space: when some terminal already holds the on-screen
+    /// keyboard (transfer it), or when a hardware keyboard is attached (no
+    /// on-screen keyboard will appear, and without first-responder status
+    /// every keystroke — arrows included — stays with the sidebar).
+    private static var wantsFocusOnSelect: Bool {
+        BelfryGhosttySurfaceView.keyboardOwner != nil || GCKeyboard.coalesced != nil
+    }
+
     func focus() {
-        // Selecting a window must not summon the keyboard — screen space is
-        // precious on touch. But if the keyboard is already up (some terminal
-        // holds it), take it over so keystrokes follow the visible session.
-        guard BelfryGhosttySurfaceView.keyboardOwner != nil else { return }
+        guard Self.wantsFocusOnSelect else { return }
         if !terminalView.becomeFirstResponder() {
             // A just-activated surface isn't in the window yet (SwiftUI mounts
             // it on the next update), so the takeover fails. Retry a tick
             // later — re-checking, in case the keyboard went away meanwhile.
             DispatchQueue.main.async { [terminalView] in
-                guard BelfryGhosttySurfaceView.keyboardOwner != nil else { return }
+                guard Self.wantsFocusOnSelect else { return }
                 _ = terminalView.becomeFirstResponder()
             }
         }

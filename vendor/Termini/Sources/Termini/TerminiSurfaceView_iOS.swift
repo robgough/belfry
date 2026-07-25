@@ -696,7 +696,7 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
                 action: action,
                 mods: mods(from: key.modifierFlags),
                 consumed_mods: GHOSTTY_MODS_NONE,
-                keycode: UInt32(key.keyCode.rawValue),
+                keycode: Self.ghosttyKeycode(forHID: UInt32(key.keyCode.rawValue)),
                 text: nil,
                 unshifted_codepoint: key.charactersIgnoringModifiers.unicodeScalars.first?.value ?? 0,
                 composing: false
@@ -713,6 +713,26 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
         }
 
         return handledAny
+    }
+
+    /// Ghostty's embedded keycode lookup uses macOS virtual keycodes on iOS
+    /// too (keycodes.zig `native` column), not the HID usages `UIKey.keyCode`
+    /// carries. Translate the keys whose encoding depends on the resolved
+    /// physical key (no text payload to fall back on); printing keys carry
+    /// text, which the encoder prefers, so they pass through untranslated.
+    private static let hidToMacKeycode: [UInt32: UInt32] = [
+        40: 0x24,   // Return
+        88: 0x4C,   // Keypad Enter
+        41: 0x35,   // Escape
+        43: 0x30,   // Tab
+        42: 0x33,   // Backspace
+        76: 0x75,   // Delete Forward
+        82: 0x7E, 81: 0x7D, 80: 0x7B, 79: 0x7C,   // arrows: up down left right
+        75: 0x74, 78: 0x79, 74: 0x73, 77: 0x77,   // PageUp PageDown Home End
+    ]
+
+    static func ghosttyKeycode(forHID hid: UInt32) -> UInt32 {
+        hidToMacKeycode[hid] ?? hid
     }
 
     private func mods(from flags: UIKeyModifierFlags) -> ghostty_input_mods_e {
@@ -738,22 +758,26 @@ public enum TerminiTerminalKey: Sendable {
     case escape, tab, enter, backspace
     case pageUp, pageDown, home, end
 
-    /// iOS HID usage codes — the same values `UIKey.keyCode` carries, which is
-    /// what the hardware-key path already feeds ghostty.
-    var hidKeycode: UInt32 {
+    /// macOS virtual keycodes (kVK_*). Ghostty's keycode table maps its
+    /// `native` column to the *mac virtual keycode* on both macOS AND iOS
+    /// (src/input/keycodes.zig: `.ios, .macos => 4`) — it does NOT accept
+    /// HID usages. Feeding `UIKey.keyCode` HID values here resolved Esc to
+    /// the semicolon key and arrows to keypad digits; with no text payload
+    /// those key events encoded nothing at all.
+    var ghosttyKeycode: UInt32 {
         switch self {
-        case .arrowUp: 82
-        case .arrowDown: 81
-        case .arrowLeft: 80
-        case .arrowRight: 79
-        case .escape: 41
-        case .tab: 43
-        case .enter: 40
-        case .backspace: 42
-        case .pageUp: 75
-        case .pageDown: 78
-        case .home: 74
-        case .end: 77
+        case .arrowUp: 0x7E
+        case .arrowDown: 0x7D
+        case .arrowLeft: 0x7B
+        case .arrowRight: 0x7C
+        case .escape: 0x35
+        case .tab: 0x30
+        case .enter: 0x24
+        case .backspace: 0x33
+        case .pageUp: 0x74
+        case .pageDown: 0x79
+        case .home: 0x73
+        case .end: 0x77
         }
     }
 
@@ -769,6 +793,16 @@ public enum TerminiTerminalKey: Sendable {
 }
 
 extension SurfaceContainerView {
+    /// Paste text with clipboard semantics. Routed through ghostty's text
+    /// callback, which wraps the text in bracketed-paste markers when the
+    /// remote app enabled mode 2004 (vim, modern shells) and filters
+    /// newlines to '\r' otherwise — sending pasted text straight to the
+    /// host as raw bytes gets multiline pastes auto-indented or executed
+    /// line by line.
+    public func pasteText(_ text: String) {
+        sendText(text)
+    }
+
     /// Synthesize a press+release pair for a special key, as if typed on a
     /// hardware keyboard.
     public func sendKey(_ key: TerminiTerminalKey) {
@@ -782,7 +816,7 @@ extension SurfaceContainerView {
             action: action,
             mods: GHOSTTY_MODS_NONE,
             consumed_mods: GHOSTTY_MODS_NONE,
-            keycode: key.hidKeycode,
+            keycode: key.ghosttyKeycode,
             text: nil,
             unshifted_codepoint: 0,
             composing: false

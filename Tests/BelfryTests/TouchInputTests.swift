@@ -214,12 +214,18 @@ struct HardwareKeyRouterTests {
             == .sendBytes(Data([0x1B, 0x62])))
     }
 
-    @Test func commandShortcutsStayWithSystemExceptPaste() {
+    @Test func commandShortcutsStayWithSystemExceptPasteAndEscape() {
         #expect(HardwareKeyRouter.route(keyCode: 25, charactersIgnoringModifiers: "v", modifiers: .command)
             == .paste)
         #expect(HardwareKeyRouter.route(keyCode: 6, charactersIgnoringModifiers: "c", modifiers: .command)
             == .passToSystem)
         #expect(HardwareKeyRouter.route(keyCode: 43, charactersIgnoringModifiers: "\t", modifiers: .command)
+            == .passToSystem)
+        // ⌘. is Escape by iPadOS convention (many iPad keyboards lack Esc).
+        #expect(HardwareKeyRouter.route(keyCode: 55, charactersIgnoringModifiers: ".", modifiers: .command)
+            == .sendKey(.escape))
+        // …but only bare ⌘. — ⌘⇧. etc. stay with the system.
+        #expect(HardwareKeyRouter.route(keyCode: 55, charactersIgnoringModifiers: ".", modifiers: [.command, .shift])
             == .passToSystem)
     }
 

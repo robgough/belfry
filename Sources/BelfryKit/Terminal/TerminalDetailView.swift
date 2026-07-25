@@ -71,6 +71,11 @@ private struct WarmSurface: View {
 
     var body: some View {
         workspace.makeSurfaceView(fontSize: fontSize, isVisible: isVisible)
+            // Keyboard avoidance is handled in UIKit from real keyboard-frame
+            // notifications (see BelfryGhosttySurfaceView "Keyboard geometry");
+            // SwiftUI's automatic avoidance sometimes left a phantom inset
+            // after the keyboard was dismissed. No-op on macOS.
+            .ignoresSafeArea(.keyboard)
             .opacity(isVisible ? 1 : 0)
             .allowsHitTesting(isVisible)
             .task {

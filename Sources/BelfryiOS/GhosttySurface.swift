@@ -38,8 +38,14 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
         // Hardware keys are routed here (HardwareKeyRouter), not blanket-
         // forwarded into ghostty — that ate Return/Ctrl on iPad keyboards.
         forwardsHardwareKeys = false
+        // No shortcuts/predictions bar: with a hardware keyboard attached an
+        // (empty) input assistant bar would otherwise be shown, reserving a
+        // strip of terminal space for nothing.
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
         installScrollbackGesture()
         installFocusTap()
+        installKeyboardObservers()
     }
 
     // MARK: Focus
@@ -61,14 +67,25 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
     /// workspace to the SSH channel.
     var onHardwareKeyBytes: ((Data) -> Void)?
 
+    /// Auto-repeat for claimed presses. UIKit only repeats keys that reach
+    /// the text-input system; anything we claim in `pressesBegan` (arrows,
+    /// backspace, ctrl chords…) would otherwise fire exactly once no matter
+    /// how long it's held.
+    private var keyRepeatTimer: Timer?
+    private var repeatingKeyCode: UInt32?
+    private static let keyRepeatInitialDelay: TimeInterval = 0.4
+    private static let keyRepeatInterval: TimeInterval = 0.07
+
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var unhandled = Set<UIPress>()
         for press in presses {
             switch route(press) {
             case .sendBytes(let data):
                 onHardwareKeyBytes?(data)
+                beginKeyRepeat(press) { [weak self] in self?.onHardwareKeyBytes?(data) }
             case .sendKey(let key):
                 sendKey(key.terminiKey)
+                beginKeyRepeat(press) { [weak self] in self?.sendKey(key.terminiKey) }
             case .paste:
                 paste(nil)
             case .passToSystem, .passToTextInput, .none:
@@ -81,6 +98,7 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        endKeyRepeat(for: presses)
         // Releases of keys we claimed are swallowed (sendKey already sent a
         // press+release pair); the rest go to the system.
         let unhandled = presses.filter { press in
@@ -92,6 +110,43 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
         if !unhandled.isEmpty {
             super.pressesEnded(Set(unhandled), with: event)
         }
+    }
+
+    /// Arm repeat for the newest claimed press (last key down wins, like a
+    /// physical keyboard). The keycode gate keeps a stale timer from firing
+    /// after another key took over or the press ended.
+    private func beginKeyRepeat(_ press: UIPress, send: @escaping () -> Void) {
+        guard let keyCode = press.key.map({ UInt32($0.keyCode.rawValue) }) else { return }
+        keyRepeatTimer?.invalidate()
+        repeatingKeyCode = keyCode
+        keyRepeatTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.keyRepeatInitialDelay, repeats: false
+        ) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.repeatingKeyCode == keyCode else { return }
+                self.keyRepeatTimer = Timer.scheduledTimer(
+                    withTimeInterval: Self.keyRepeatInterval, repeats: true
+                ) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        guard let self, self.repeatingKeyCode == keyCode else { return }
+                        send()
+                    }
+                }
+            }
+        }
+    }
+
+    private func endKeyRepeat(for presses: Set<UIPress>) {
+        guard let repeating = repeatingKeyCode,
+              presses.contains(where: { $0.key.map({ UInt32($0.keyCode.rawValue) }) == repeating })
+        else { return }
+        stopKeyRepeat()
+    }
+
+    private func stopKeyRepeat() {
+        keyRepeatTimer?.invalidate()
+        keyRepeatTimer = nil
+        repeatingKeyCode = nil
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -126,8 +181,57 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned, Self.keyboardOwner === self { Self.keyboardOwner = nil }
+        if resigned {
+            stopKeyRepeat()
+            if Self.keyboardOwner === self { Self.keyboardOwner = nil }
+        }
         return resigned
+    }
+
+    // MARK: Keyboard geometry
+
+    /// The terminal opts out of SwiftUI's automatic keyboard avoidance
+    /// (`.ignoresSafeArea(.keyboard)` in TerminalDetailView) — it proved
+    /// capable of leaving a phantom inset behind after the keyboard was gone.
+    /// Instead the container pins our bottom edge through this constraint and
+    /// we drive its constant from the actual keyboard frame notifications:
+    /// overlap is computed fresh from geometry each time, so "keyboard gone"
+    /// is always exactly zero.
+    var containerBottomConstraint: NSLayoutConstraint?
+    private(set) var keyboardOverlap: CGFloat = 0
+
+    private func installKeyboardObservers() {
+        for name in [UIResponder.keyboardWillChangeFrameNotification,
+                     UIResponder.keyboardWillHideNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(keyboardFrameChanged(_:)), name: name, object: nil)
+        }
+    }
+
+    @objc private func keyboardFrameChanged(_ note: Notification) {
+        guard let window, let superview else { return }
+        var overlap: CGFloat = 0
+        if note.name == UIResponder.keyboardWillChangeFrameNotification,
+           let endFrame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+            let frame = window.convert(endFrame, from: window.screen.coordinateSpace)
+            // A floating/split keyboard is narrower than the window; it
+            // hovers over content rather than docking, so no inset.
+            if frame.width >= window.bounds.width {
+                // Measure against the container, not self — self may already
+                // be shrunken by the previous overlap.
+                let containerFrame = superview.convert(superview.bounds, to: window)
+                overlap = max(0, min(containerFrame.maxY, window.bounds.maxY) - frame.minY)
+                overlap = min(overlap, containerFrame.height)
+            }
+        }
+        guard overlap != keyboardOverlap else { return }
+        keyboardOverlap = overlap
+        containerBottomConstraint?.constant = -overlap
+        let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey]
+            as? TimeInterval ?? 0.25
+        UIView.animate(withDuration: duration) {
+            superview.layoutIfNeeded()
+        }
     }
 
     // MARK: Touch scrollback
@@ -184,7 +288,10 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
 
     override func paste(_ sender: Any?) {
         guard let text = UIPasteboard.general.string else { return }
-        insertText(text)
+        // Through ghostty, not the typed-text path: pastes must honour
+        // bracketed-paste mode (vim auto-indent, shells not executing every
+        // line) — only the terminal state knows whether mode 2004 is on.
+        pasteText(text)
     }
 }
 
@@ -228,9 +335,15 @@ struct GhosttySurfaceContainer: UIViewRepresentable {
             // Moving to a new superview drops the old constraints automatically.
             terminalView.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(terminalView)
+            // The bottom pin carries the keyboard overlap (see "Keyboard
+            // geometry" above): the container spans under the keyboard, the
+            // terminal stops above it.
+            let bottom = terminalView.bottomAnchor.constraint(
+                equalTo: container.bottomAnchor, constant: -terminalView.keyboardOverlap)
+            terminalView.containerBottomConstraint = bottom
             NSLayoutConstraint.activate([
                 terminalView.topAnchor.constraint(equalTo: container.topAnchor),
-                terminalView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                bottom,
                 terminalView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
                 terminalView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             ])

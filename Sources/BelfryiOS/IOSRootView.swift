@@ -81,15 +81,8 @@ struct IOSRootView: View {
                             }
                         }
                     }
-                    if selectedWorkspace != nil {
-                        ToolbarItem(placement: .primaryAction) {
-                            Button {
-                                (selectedWorkspace as? BelfrySSHWorkspace)?.toggleKeyboard()
-                            } label: {
-                                Image(systemName: "keyboard")
-                            }
-                        }
-                    }
+                    // (The keyboard toggle lives in the dock's bottom-right
+                    // capsule only — a toolbar twin proved redundant.)
                 }
         }
         // iPad honours the user's choice: dock the tree beside the terminal
@@ -130,6 +123,29 @@ struct IOSRootView: View {
             try? await Task.sleep(for: .milliseconds(1500))
             workspace.sendInput(Data([0x03]))               // ^C — the router's ctrl path
             try? await Task.sleep(for: .seconds(1))
+            // BELFRY_TEST_KEYS=1: synthesized special keys end-to-end. `cat -v`
+            // echoes them visibly (^[ for Esc, ^[[A… for arrows), so the
+            // screenshot proves the ghostty keycode translation — Enter's text
+            // payload made it immune to the HID/mac-keycode mixup that killed
+            // Esc and arrows on device. Replaces the scroll phase this run.
+            if ProcessInfo.processInfo.environment["BELFRY_TEST_KEYS"] == "1" {
+                workspace.sendInput(Data("cat -v".utf8))
+                workspace.sendKey(.enter)
+                try? await Task.sleep(for: .milliseconds(800))
+                for key in [TerminalKey.arrowUp, .arrowDown, .arrowLeft, .arrowRight, .escape] {
+                    workspace.sendKey(key)
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+                // Paste fidelity: with mode 2004 on, ghostty must wrap the
+                // paste in ^[[200~ … ^[[201~ (cat -v makes that visible).
+                workspace.sendInput(Data([0x03]))
+                try? await Task.sleep(for: .milliseconds(500))
+                workspace.sendInput(Data("printf '\\033[?2004h' && cat -v".utf8))
+                workspace.sendKey(.enter)
+                try? await Task.sleep(for: .milliseconds(800))
+                workspace.terminalView.pasteText("paste1\npaste2")
+                return
+            }
             let mid = CGPoint(x: workspace.terminalView.bounds.midX,
                               y: workspace.terminalView.bounds.midY)
             NSLog("BELFRY-EXERCISE mouseCaptured=%d", workspace.terminalView.isMouseCaptured ? 1 : 0)

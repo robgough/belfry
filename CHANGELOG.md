@@ -2,6 +2,45 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.21] — 2026-07-25
+
+### Added
+
+- **Arrow keys in the dock.** A d-pad key next to ctrl/esc/tab toggles a
+  held-to-repeat arrow capsule; the choice sticks across launches. (The
+  cursor trackpad — long-press-drag on the terminal, or holding the
+  spacebar — remains the gesture alternative.)
+
+### Fixed
+
+- **The terminal reclaims its full height reliably.** Keyboard avoidance
+  moved out of SwiftUI (which sometimes left a phantom inset after the
+  keyboard was gone) into a direct measurement of the keyboard's actual
+  frame. The empty shortcuts bar iOS reserves for hardware keyboards is
+  suppressed too.
+- **Held hardware keys repeat.** Arrows, Backspace, paging and Ctrl
+  chords fired exactly once per press no matter how long the key was
+  held; they now auto-repeat like any terminal expects.
+- **One keyboard button, not two.** The toolbar toggle duplicated the
+  dock's; the dock (bottom right) keeps it.
+- **Pasting honours bracketed-paste mode.** Pastes now route through the
+  terminal engine, which wraps them in paste markers when the remote app
+  asked for them — multiline pastes into vim no longer cascade
+  auto-indent, and shells that guard against pasted commands can.
+
+- **Esc and arrows actually reach the terminal now** — from the hardware
+  keyboard, the on-screen dock, and the cursor trackpad. Synthesized keys
+  were built with iOS HID key codes, but the renderer's key table expects
+  Mac virtual key codes on iOS too: Esc resolved to the semicolon key and
+  arrows to keypad digits, encoding nothing. (Return survived only because
+  it carries a literal "\r".)
+- **With a hardware keyboard attached, selecting a session focuses the
+  terminal.** Keystrokes — arrows included — no longer stay with the
+  sidebar until you tap the terminal. (Without a hardware keyboard,
+  selection still never summons the on-screen keyboard.)
+- **⌘. sends Esc**, matching the iPadOS convention — it's the only Escape
+  on Magic Keyboards without a function row.
+
 ## [2026.07.20] — 2026-07-25
 
 First-feedback fixes for the 2026.07.19 iOS TestFlight build.
