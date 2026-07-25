@@ -1,7 +1,7 @@
 import CoreLocation
 import Foundation
 
-/// Opt-in indefinite background runtime via continuous coarse location
+/// Opt-in bounded background runtime via continuous coarse location
 /// updates — the only App Store-sanctioned way for a terminal app to keep
 /// its SSH connections alive past the ~30 s background grace (Blink's
 /// long-standing approach). The location values are deliberately ignored:
@@ -9,10 +9,16 @@ import Foundation
 /// sockets, running. Coarsest accuracy + an infinite distance filter keep
 /// the battery cost minimal; iOS shows its location indicator while
 /// engaged, which is the honest signal that the app is still running.
+///
+/// The runtime is a *window*, not forever: the point is surviving a quick
+/// bounce through Safari/Slack, so the user picks a duration (3 min is the
+/// headline) and BackgroundGrace suspends in the orderly way when it
+/// lapses. Warm resume covers anything longer.
 @MainActor
 final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
-    /// UserDefaults key for the user's opt-in (bound by the options menu).
-    static let enabledKey = "belfry.keepAliveInBackground"
+    /// UserDefaults key for the chosen window in seconds (0 = off), bound
+    /// by the options menu picker.
+    static let durationKey = "belfry.keepAliveDuration"
 
     private let manager = CLLocationManager()
     private(set) var isEngaged = false
@@ -25,9 +31,12 @@ final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
         manager.pausesLocationUpdatesAutomatically = false
     }
 
-    var isEnabled: Bool {
-        UserDefaults.standard.bool(forKey: Self.enabledKey)
+    /// The chosen keep-alive window; 0 means the feature is off.
+    var duration: TimeInterval {
+        TimeInterval(UserDefaults.standard.integer(forKey: Self.durationKey))
     }
+
+    var isEnabled: Bool { duration > 0 }
 
     private var isAuthorized: Bool {
         switch manager.authorizationStatus {

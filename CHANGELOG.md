@@ -6,11 +6,13 @@ All notable changes to Belfry are documented here.
 
 ### Added
 
-- **Keep Alive in Background** (⋯ menu, off by default). Opts into
-  Location Services purely as background runtime — the sanctioned way for
-  a terminal app to keep SSH connections running indefinitely. Location
-  is never read, stored, or shared; iOS shows its location indicator
-  while it's working, which is the honest signal the app is still alive.
+- **Keep Alive in Background** (⋯ menu, off by default; 3 min / 15 min /
+  1 hour). Holds SSH connections open for the chosen window after
+  backgrounding — enough to bounce through other apps and come back live
+  — then suspends normally. Powered by Location Services purely as
+  background runtime (the sanctioned mechanism); location is never read,
+  stored, or shared, and iOS shows its location indicator while the
+  window is active.
 
 ### Fixed
 

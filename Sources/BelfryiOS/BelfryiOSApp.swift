@@ -101,9 +101,21 @@ final class BackgroundGrace {
     func enteredBackground(model: AppModel) {
         endTask()
         pendingSuspend?.cancel()
-        // Keep-alive engaged: the process (and its sockets) stays running —
-        // no suspension scheduled at all.
-        if keepAlive.engageIfEnabled() { return }
+        // Keep-alive engaged: the process (and its sockets) stays running
+        // for the chosen window — enough to bounce through other apps and
+        // come back live — then suspends in the same orderly way. Suspend
+        // BEFORE disengaging: once location stops, iOS can freeze us at any
+        // moment, so the connections must already be down by then.
+        if keepAlive.engageIfEnabled() {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.suspendNow(model: model)
+                self.keepAlive.disengage()
+            }
+            pendingSuspend = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + keepAlive.duration, execute: work)
+            return
+        }
         taskID = UIApplication.shared.beginBackgroundTask(withName: "belfry.ssh-grace") { [weak self] in
             // Expiration arrives on the main thread; suspend immediately.
             self?.suspendNow(model: model)
