@@ -20,13 +20,35 @@ final class AppModel {
     /// the user can rearrange by dragging.
     private(set) var pins: [PinnedItem]
 
-    /// Terminal font size in points; nil = libghostty's default. Applied to all
-    /// session surfaces.
-    var fontSize: Double?
+    /// Terminal font size in points, persisted across launches; nil falls
+    /// back to the platform default. Applied to all session surfaces.
+    var fontSize: Double? {
+        didSet {
+            if let fontSize {
+                UserDefaults.standard.set(fontSize, forKey: Self.fontSizeKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.fontSizeKey)
+            }
+        }
+    }
+    private static let fontSizeKey = "belfry.fontSize"
+
+    /// ghostty metrics run larger than SwiftTerm's did at the same point
+    /// size, so the iOS default dropped from 13 to 11 with the renderer
+    /// switch; the Mac keeps nil (libghostty's default) as before.
+    static let platformDefaultFontSize: Double? = {
+        #if os(iOS)
+        11
+        #else
+        nil
+        #endif
+    }()
 
     init(hosts: [HostModel]) {
         self.hosts = hosts
         self.pins = PinPersistence.load()
+        let stored = UserDefaults.standard.object(forKey: Self.fontSizeKey) as? Double
+        self.fontSize = stored ?? Self.platformDefaultFontSize
         AppModel.current = self
     }
 
@@ -166,10 +188,11 @@ final class AppModel {
 
     // MARK: Font
 
-    private let baseFontSize: Double = 13
+    private let baseFontSize: Double = AppModel.platformDefaultFontSize ?? 13
     func increaseFont() { fontSize = min((fontSize ?? baseFontSize) + 1, 36) }
     func decreaseFont() { fontSize = max((fontSize ?? baseFontSize) - 1, 8) }
     // Reset to an explicit base (not nil): the nil → `reset_font_size` path in
     // Termini doesn't reliably re-apply, whereas `set_font_size` does.
     func resetFont() { fontSize = baseFontSize }
+    var displayFontSize: Int { Int(fontSize ?? baseFontSize) }
 }

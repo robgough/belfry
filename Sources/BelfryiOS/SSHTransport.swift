@@ -199,6 +199,18 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         controller.onInputText = { [weak self] text in
             self?.sendTyped(text)
         }
+        #if DEBUG
+        // Harness probe: BELFRY_TEST_TAPWRITES=1 logs ghostty-originated host
+        // writes (mouse reports etc.) so headless runs can see whether wheel
+        // events actually left the renderer.
+        if ProcessInfo.processInfo.environment["BELFRY_TEST_TAPWRITES"] == "1" {
+            controller.onTransportWrite = { [weak self] data in
+                let hex = data.map { String(format: "%02x", $0) }.joined()
+                NSLog("BELFRY-TAPWRITE %@", hex)
+                self?.session.send(data)
+            }
+        }
+        #endif
         controller.onSizeChange = { [weak self] size in
             guard let self else { return }
             terminalSize = size
@@ -212,6 +224,11 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
         terminalView.installTrackpad { [weak self] point in
             // Long-press without steering: token preview (link/file path).
             self?.onTokenLongPress?(point)
+        }
+        // Routed hardware-key bytes (ctrl chords, alt-meta) go straight to
+        // the channel — same path the sticky-Ctrl modifier uses.
+        terminalView.onHardwareKeyBytes = { [weak self] data in
+            self?.session.send(data)
         }
     }
 
@@ -303,7 +320,7 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     private static func appearance(fontSize: Double?) -> TerminiTerminalAppearance {
         TerminiTerminalAppearance(
             theme: SurfaceTheme.theme,
-            fontSize: fontSize ?? 13,
+            fontSize: fontSize ?? AppModel.platformDefaultFontSize ?? 11,
             fontFamily: .init(name: "Maple Mono NF"),
             extraConfigFilePaths: SurfaceTheme.configFilePaths)
     }

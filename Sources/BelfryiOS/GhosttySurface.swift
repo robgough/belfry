@@ -31,7 +31,84 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
     override init() {
         super.init()
         autoFocusOnAttach = false
+        // Touches must not summon the keyboard — a pan is usually someone
+        // trying to READ. Focus comes from a deliberate tap (below), the
+        // toolbar/dock toggles, or focus-transfer between sessions.
+        focusOnTouch = false
+        // Hardware keys are routed here (HardwareKeyRouter), not blanket-
+        // forwarded into ghostty — that ate Return/Ctrl on iPad keyboards.
+        forwardsHardwareKeys = false
         installScrollbackGesture()
+        installFocusTap()
+    }
+
+    // MARK: Focus
+
+    private func installFocusTap() {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleFocusTap(_:)))
+        tap.numberOfTapsRequired = 1
+        addGestureRecognizer(tap)
+    }
+
+    @objc private func handleFocusTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        _ = becomeFirstResponder()
+    }
+
+    // MARK: Hardware keyboard
+
+    /// Sink for routed key bytes (ctrl chords, alt-meta) — wired by the
+    /// workspace to the SSH channel.
+    var onHardwareKeyBytes: ((Data) -> Void)?
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            switch route(press) {
+            case .sendBytes(let data):
+                onHardwareKeyBytes?(data)
+            case .sendKey(let key):
+                sendKey(key.terminiKey)
+            case .paste:
+                paste(nil)
+            case .passToSystem, .passToTextInput, .none:
+                unhandled.insert(press)
+            }
+        }
+        if !unhandled.isEmpty {
+            super.pressesBegan(unhandled, with: event)
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        // Releases of keys we claimed are swallowed (sendKey already sent a
+        // press+release pair); the rest go to the system.
+        let unhandled = presses.filter { press in
+            switch route(press) {
+            case .passToSystem, .passToTextInput, .none: true
+            default: false
+            }
+        }
+        if !unhandled.isEmpty {
+            super.pressesEnded(Set(unhandled), with: event)
+        }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        pressesEnded(presses, with: event)
+    }
+
+    private func route(_ press: UIPress) -> HardwareKeyRouter.Action? {
+        guard let key = press.key else { return nil }
+        var modifiers: HardwareKeyRouter.Modifiers = []
+        if key.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        if key.modifierFlags.contains(.control) { modifiers.insert(.control) }
+        if key.modifierFlags.contains(.alternate) { modifiers.insert(.alternate) }
+        if key.modifierFlags.contains(.command) { modifiers.insert(.command) }
+        return HardwareKeyRouter.route(
+            keyCode: UInt32(key.keyCode.rawValue),
+            charactersIgnoringModifiers: key.charactersIgnoringModifiers,
+            modifiers: modifiers)
     }
 
     @available(*, unavailable)
@@ -84,15 +161,17 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
         }
     }
 
-    /// Claim only clearly vertical single-finger pans for scrollback; let
-    /// everything else (including Termini's own two-finger pan) begin freely.
+    /// Claim mostly-vertical single-finger pans for scrollback; let everything
+    /// else (including Termini's own two-finger pan) begin freely. The bias is
+    /// gentle — a slow reading-scroll starts with tiny velocities, and there
+    /// is no competing single-finger horizontal gesture to protect.
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === scrollbackPan,
               let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
         // Never claim the pan while the trackpad is steering.
         if trackpadDriver?.isActive == true { return false }
         let velocity = pan.velocity(in: self)
-        return abs(velocity.y) > abs(velocity.x) * 1.5
+        return abs(velocity.y) >= abs(velocity.x)
     }
 
     // MARK: Edit menu

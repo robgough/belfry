@@ -33,9 +33,7 @@ struct IOSRootView: View {
                             selection: $selection, prompt: $prompt, confirm: $confirm)
                 .navigationTitle("Belfry")
                 .toolbar {
-                    if horizontalSizeClass == .regular {
-                        ToolbarItem(placement: .primaryAction) { optionsMenu }
-                    }
+                    ToolbarItem(placement: .primaryAction) { optionsMenu }
                     ToolbarItem(placement: .primaryAction) { addMenu }
                 }
         } detail: {
@@ -116,6 +114,30 @@ struct IOSRootView: View {
                     break
                 }
             }
+            // BELFRY_TEST_EXERCISE=1: drive the input primitives end-to-end
+            // (typed text, synthesized Enter, control bytes, wheel scrollback)
+            // so screenshots can verify them without synthetic touches. These
+            // are exactly the primitives the dock, hardware-key router, and
+            // scroll gesture call.
+            guard ProcessInfo.processInfo.environment["BELFRY_TEST_EXERCISE"] == "1" else { return }
+            try? await Task.sleep(for: .seconds(5))
+            guard let workspace = selectedWorkspace as? BelfrySSHWorkspace else { return }
+            workspace.sendInput(Data("seq 1 200".utf8))
+            workspace.sendKey(.enter)                       // Enter via ghostty key event
+            try? await Task.sleep(for: .seconds(1))
+            workspace.sendInput(Data("echo ENTER-OK && sleep 30".utf8))
+            workspace.sendKey(.enter)
+            try? await Task.sleep(for: .milliseconds(1500))
+            workspace.sendInput(Data([0x03]))               // ^C — the router's ctrl path
+            try? await Task.sleep(for: .seconds(1))
+            let mid = CGPoint(x: workspace.terminalView.bounds.midX,
+                              y: workspace.terminalView.bounds.midY)
+            NSLog("BELFRY-EXERCISE mouseCaptured=%d", workspace.terminalView.isMouseCaptured ? 1 : 0)
+            let delta = Double(ProcessInfo.processInfo.environment["BELFRY_TEST_SCROLL_DELTA"] ?? "14") ?? 14
+            for _ in 0..<40 {                               // wheel → tmux copy-mode
+                workspace.terminalView.scrollWheel(deltaY: delta, at: mid)
+                try? await Task.sleep(for: .milliseconds(50))
+            }
             #endif
         }
         .sheet(item: $prompt) { prompt in
@@ -163,16 +185,31 @@ struct IOSRootView: View {
             })
     }
 
-    /// iPad-only options menu. Distinct from the split view's built-in sidebar
-    /// show/hide toggle (an `ellipsis` glyph, not another sidebar icon), it hosts
-    /// low-frequency preferences — currently just dock-vs-overlay, with room to
-    /// grow (font size, etc.). The Picker shows both choices with one checked.
+    /// Options menu: low-frequency preferences. Font size applies to every
+    /// session surface live and persists; the sidebar picker only appears
+    /// where the split view actually shows two columns (iPad / big iPhones
+    /// in landscape — it's meaningless in a stacked layout).
     private var optionsMenu: some View {
         Menu {
-            Section("Sidebar") {
-                Picker("Sidebar", selection: $sidebarLayout) {
-                    Text("Keep Sidebar Open").tag(SidebarLayout.keepOpen)
-                    Text("Overlay Sidebar").tag(SidebarLayout.overlay)
+            Section("Font Size — \(model.displayFontSize) pt") {
+                Button {
+                    model.increaseFont()
+                } label: {
+                    Label("Larger", systemImage: "textformat.size.larger")
+                }
+                Button {
+                    model.decreaseFont()
+                } label: {
+                    Label("Smaller", systemImage: "textformat.size.smaller")
+                }
+                Button("Reset") { model.resetFont() }
+            }
+            if horizontalSizeClass == .regular {
+                Section("Sidebar") {
+                    Picker("Sidebar", selection: $sidebarLayout) {
+                        Text("Keep Sidebar Open").tag(SidebarLayout.keepOpen)
+                        Text("Overlay Sidebar").tag(SidebarLayout.overlay)
+                    }
                 }
             }
         } label: {

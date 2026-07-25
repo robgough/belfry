@@ -173,3 +173,58 @@ struct ShortcutStoreTests {
         #expect(reloadedShell.shortcuts.contains { $0.title == "Deploy" })
     }
 }
+
+struct HardwareKeyRouterTests {
+    typealias M = HardwareKeyRouter.Modifiers
+
+    @Test func plainTypingPassesToTextInput() {
+        #expect(HardwareKeyRouter.route(keyCode: 4, charactersIgnoringModifiers: "a", modifiers: [])
+            == .passToTextInput)
+        #expect(HardwareKeyRouter.route(keyCode: 4, charactersIgnoringModifiers: "a", modifiers: .shift)
+            == .passToTextInput)
+    }
+
+    @Test func returnEscapeArrowsSynthesize() {
+        #expect(HardwareKeyRouter.route(keyCode: 40, charactersIgnoringModifiers: "\r", modifiers: [])
+            == .sendKey(.enter))
+        #expect(HardwareKeyRouter.route(keyCode: 88, charactersIgnoringModifiers: "\r", modifiers: [])
+            == .sendKey(.enter))
+        #expect(HardwareKeyRouter.route(keyCode: 41, charactersIgnoringModifiers: "", modifiers: [])
+            == .sendKey(.escape))
+        #expect(HardwareKeyRouter.route(keyCode: 82, charactersIgnoringModifiers: "", modifiers: [])
+            == .sendKey(.arrowUp))
+        #expect(HardwareKeyRouter.route(keyCode: 42, charactersIgnoringModifiers: "", modifiers: [])
+            == .sendKey(.backspace))
+    }
+
+    @Test func controlChordsBecomeBytes() {
+        #expect(HardwareKeyRouter.route(keyCode: 6, charactersIgnoringModifiers: "c", modifiers: .control)
+            == .sendBytes(Data([0x03])))
+        #expect(HardwareKeyRouter.route(keyCode: 15, charactersIgnoringModifiers: "l", modifiers: .control)
+            == .sendBytes(Data([0x0C])))
+        #expect(HardwareKeyRouter.route(keyCode: 47, charactersIgnoringModifiers: "[", modifiers: .control)
+            == .sendBytes(Data([0x1B])))
+        // Unmappable ctrl chord goes to the system rather than vanishing.
+        #expect(HardwareKeyRouter.route(keyCode: 30, charactersIgnoringModifiers: "1", modifiers: .control)
+            == .passToSystem)
+    }
+
+    @Test func altActsAsMeta() {
+        #expect(HardwareKeyRouter.route(keyCode: 5, charactersIgnoringModifiers: "b", modifiers: .alternate)
+            == .sendBytes(Data([0x1B, 0x62])))
+    }
+
+    @Test func commandShortcutsStayWithSystemExceptPaste() {
+        #expect(HardwareKeyRouter.route(keyCode: 25, charactersIgnoringModifiers: "v", modifiers: .command)
+            == .paste)
+        #expect(HardwareKeyRouter.route(keyCode: 6, charactersIgnoringModifiers: "c", modifiers: .command)
+            == .passToSystem)
+        #expect(HardwareKeyRouter.route(keyCode: 43, charactersIgnoringModifiers: "\t", modifiers: .command)
+            == .passToSystem)
+    }
+
+    @Test func modifierOnlyPressesIgnored() {
+        #expect(HardwareKeyRouter.route(keyCode: 0xE0, charactersIgnoringModifiers: "", modifiers: .control)
+            == .passToSystem)
+    }
+}

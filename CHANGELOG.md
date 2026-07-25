@@ -2,6 +2,31 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.20] — 2026-07-25
+
+First-feedback fixes for the 2026.07.19 iOS TestFlight build.
+
+### Added
+
+- **Font size setting.** The ⋯ menu now has Larger / Smaller / Reset for
+  the terminal font, on iPhone as well as iPad; the choice persists and
+  applies to every session live. The default also dropped from 13 pt to
+  11 pt — ghostty's metrics run larger than the old renderer's did.
+
+### Fixed
+
+- **Scrolling no longer summons the keyboard.** Touching the terminal to
+  read something left the keyboard down; it appears only on a deliberate
+  tap, the dock key, or the toolbar button.
+- **Single-finger scrollback works.** Mouse positions were being reported
+  to the renderer in the wrong unit, which silently dropped the wheel
+  events tmux needs for copy-mode scrolling.
+- **Hardware keyboards (iPad Magic Keyboard).** Return, Ctrl chords,
+  Esc, arrows, paging keys and Alt-as-Meta are now routed explicitly to
+  the terminal instead of trusting the previous blanket key forwarding,
+  which ate Return and Ctrl. ⌘V pastes; other ⌘ shortcuts stay with the
+  system.
+
 ## [2026.07.19] — 2026-07-25
 
 iOS/iPadOS TestFlight release: the terminal is now rendered by libghostty —

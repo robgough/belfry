@@ -112,6 +112,18 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
     /// upstream call sites keep the auto-focus default.
     public var autoFocusOnAttach = true
 
+    /// When false, touching the surface does not grab first responder either —
+    /// hosts that distinguish taps (focus) from pans (scrollback, where a
+    /// keyboard popping up mid-read is exactly wrong) opt out and install
+    /// their own tap recognizer. Default preserves upstream behavior.
+    public var focusOnTouch = true
+
+    /// When false, hardware key presses are NOT forwarded into ghostty's key
+    /// API here — they fall through to UIKit (and the host's own overrides).
+    /// Belfry routes hardware keys itself: the blanket forward-and-claim
+    /// approach ate Return and Ctrl chords on real iPad keyboards.
+    public var forwardsHardwareKeys = true
+
     /// iOS twin of the macOS `isRenderVisible` patch: a warm-but-hidden
     /// surface keeps absorbing output (terminal state stays current) but
     /// stops drawing — no display-link frames, renderer marked occluded —
@@ -230,6 +242,7 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
 
     open override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
+        guard focusOnTouch else { return }   // Belfry patch: tap-vs-pan focus
         _ = becomeFirstResponder()
     }
 
@@ -276,21 +289,21 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
         true
     }
 
-    public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    open override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if forward(presses: presses, action: GHOSTTY_ACTION_PRESS) {
             return
         }
         super.pressesBegan(presses, with: event)
     }
 
-    public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    open override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if forward(presses: presses, action: GHOSTTY_ACTION_RELEASE) {
             return
         }
         super.pressesEnded(presses, with: event)
     }
 
-    public override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+    open override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if forward(presses: presses, action: GHOSTTY_ACTION_RELEASE) {
             return
         }
@@ -784,13 +797,23 @@ extension SurfaceContainerView {
         }
     }
 
+    /// Whether the app in the terminal has captured the mouse (mouse
+    /// reporting active — tmux `mouse on`, vim, etc). Diagnostic + gesture
+    /// routing aid.
+    public var isMouseCaptured: Bool {
+        guard let surface else { return false }
+        return ghostty_surface_mouse_captured(surface)
+    }
+
     /// Report a touch location as the mouse position (view points). Wheel
     /// events that follow are routed by ghostty to the pane under this point
     /// when the app has mouse reporting on (tmux `mouse on`).
     public func reportTouchLocation(_ point: CGPoint) {
         guard let surface else { return }
-        let scale = window?.screen.scale ?? UIScreen.main.scale
-        ghostty_surface_mouse_pos(surface, point.x * scale, point.y * scale, GHOSTTY_MODS_NONE)
+        // Unscaled view points: the embedded apprt converts to pixels itself
+        // (`cursorPosToPixels`) — pre-scaling here put the reported position
+        // outside the grid and silently killed mouse reports.
+        ghostty_surface_mouse_pos(surface, point.x, point.y, GHOSTTY_MODS_NONE)
     }
 
     /// Precision scroll by pixel deltas (view points; converted to pixels).
