@@ -2,6 +2,27 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.23] — 2026-07-25
+
+### Added
+
+- **Keep Alive in Background** (⋯ menu, off by default). Opts into
+  Location Services purely as background runtime — the sanctioned way for
+  a terminal app to keep SSH connections running indefinitely. Location
+  is never read, stored, or shared; iOS shows its location indicator
+  while it's working, which is the honest signal the app is still alive.
+
+### Fixed
+
+- **Returning to the app no longer feels like a cold start.** Background
+  suspension used to tear everything down — empty sidebar, blank
+  terminals, full reconnect on return. Now the session tree and every
+  warm terminal surface survive suspension; foregrounding shows the last
+  content instantly while connections quietly re-establish and repaint
+  behind it, including output that happened while the app was away.
+- The background grace window follows what iOS actually grants (~30 s)
+  instead of a fixed 25 s.
+
 ## [2026.07.22] — 2026-07-25
 
 ### Fixed

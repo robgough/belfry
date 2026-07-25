@@ -20,6 +20,12 @@
 	<string>1</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Belfry uses Location Services only to stay running in the background so your SSH connections aren't dropped. Your location is never read, stored, or shared.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 </dict>

@@ -27,7 +27,7 @@ struct BelfryiOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            IOSRootView(model: model)
+            IOSRootView(model: model, keepAlive: backgroundGrace.keepAlive)
         }
         // The tmux servers keep the sessions; only our links need managing.
         // On background, a UIBackgroundTask keeps the SSH connections alive for
@@ -94,13 +94,16 @@ extension HostModel {
 final class BackgroundGrace {
     private var taskID: UIBackgroundTaskIdentifier = .invalid
     private var pendingSuspend: DispatchWorkItem?
-    /// Stay under the ~30s the system typically grants, so we suspend in an
-    /// orderly fashion rather than in the expiration handler's last gasp.
-    private let graceSeconds: TimeInterval = 25
+    /// Opt-in indefinite runtime (see BackgroundKeepAlive); owned here so the
+    /// background/foreground transitions and the options toggle share it.
+    let keepAlive = BackgroundKeepAlive()
 
     func enteredBackground(model: AppModel) {
         endTask()
         pendingSuspend?.cancel()
+        // Keep-alive engaged: the process (and its sockets) stays running —
+        // no suspension scheduled at all.
+        if keepAlive.engageIfEnabled() { return }
         taskID = UIApplication.shared.beginBackgroundTask(withName: "belfry.ssh-grace") { [weak self] in
             // Expiration arrives on the main thread; suspend immediately.
             self?.suspendNow(model: model)
@@ -109,10 +112,16 @@ final class BackgroundGrace {
             self?.suspendNow(model: model)
         }
         pendingSuspend = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + graceSeconds, execute: work)
+        // Use what the system actually granted (usually ~30 s, occasionally
+        // more) instead of a fixed guess, keeping a 5 s margin to suspend in
+        // an orderly fashion rather than in the expiration handler's last gasp.
+        let granted = UIApplication.shared.backgroundTimeRemaining
+        let grace = granted.isFinite ? min(max(granted - 5, 5), 110) : 25
+        DispatchQueue.main.asyncAfter(deadline: .now() + grace, execute: work)
     }
 
     func becameActive(model: AppModel) {
+        keepAlive.disengage()
         pendingSuspend?.cancel()
         pendingSuspend = nil
         endTask()

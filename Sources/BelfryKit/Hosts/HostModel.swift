@@ -134,25 +134,29 @@ final class HostModel: Identifiable {
     }
 
     /// App moved to the background (iOS): drop the live connections quietly but
-    /// keep the intent, so `resumeIfWanted()` restores everything on foreground.
-    /// Sessions live in the tmux server; only our links are torn down.
+    /// keep the intent — and, unlike a disconnect, keep the session tree and
+    /// every warm surface. Sessions live in the tmux server; only our links
+    /// are torn down, so foregrounding shows the last-rendered state
+    /// immediately while `resumeIfWanted()` reattaches behind it.
     func suspend() {
         guard wantsConnection else { return }
         reconnectWork?.cancel()
         reconnectWork = nil
         client.onExitHandler = nil
         client.stop()
-        surfaceStore.teardownAll()
-        store.clear()
+        surfaceStore.suspendAll()
         store.status = .disconnected("suspended")
     }
 
     /// Foreground again (iOS): reconnect hosts whose intent survived suspension.
+    /// The control client refreshes the session tree (pruning anything that
+    /// died while we were away) and each kept surface re-attaches in place.
     func resumeIfWanted() {
         guard wantsConnection else { return }
         reconnectAttempts = 0
         store.status = .connecting
         rebuildClientAndStart(ensureSession: false)
+        surfaceStore.resumeAll()
     }
 
     // MARK: Reconnect plumbing

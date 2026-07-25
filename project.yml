@@ -47,6 +47,15 @@ targets:
       properties:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # Opt-in "Keep Alive in Background": coarse location updates are the
+        # App Store-sanctioned way to keep SSH connections running past the
+        # ~30s background grace (see BackgroundKeepAlive.swift — the values
+        # are never read).
+        UIBackgroundModes: [location]
+        NSLocationWhenInUseUsageDescription: >-
+          Belfry uses Location Services only to stay running in the background
+          so your SSH connections aren't dropped. Your location is never read,
+          stored, or shared.
     preBuildScripts:
       # Guard against a stale generated project: fail the build (with a clear
       # message) if a Swift file was added/renamed under the target's source

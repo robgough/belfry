@@ -10,6 +10,9 @@ private enum SidebarLayout: String { case keepOpen, overlay }
 /// NavigationSplitView (sidebar column on iPad; stacked on iPhone).
 struct IOSRootView: View {
     let model: AppModel
+    /// Owned by BackgroundGrace (the app); surfaced here for the options
+    /// toggle, which needs to request location permission on first enable.
+    let keepAlive: BackgroundKeepAlive
     @State private var selection: WindowSelection?
     @State private var prompt: SidebarPrompt?
     @State private var confirm: ConfirmAction?
@@ -22,6 +25,8 @@ struct IOSRootView: View {
     /// iPad sidebar behaviour (see `SidebarLayout`). Defaults to keeping the
     /// tree docked; the toolbar toggle switches to the over-the-terminal overlay.
     @AppStorage("belfry.ipadSidebarLayout") private var sidebarLayout: SidebarLayout = .keepOpen
+    /// Opt-in background keep-alive (location-powered; see BackgroundKeepAlive).
+    @AppStorage(BackgroundKeepAlive.enabledKey) private var keepAliveEnabled = false
     /// `.regular` only when the split view actually shows two columns (iPad, and
     /// large iPhones in landscape) — where the layout choice is meaningful and
     /// the toggle belongs. `.compact` (stacked) hides it.
@@ -228,8 +233,19 @@ struct IOSRootView: View {
                     }
                 }
             }
+            Section("Connections") {
+                Toggle(isOn: $keepAliveEnabled) {
+                    Label("Keep Alive in Background", systemImage: "powerplug")
+                }
+            }
         } label: {
             Image(systemName: "ellipsis.circle")
+        }
+        .onChange(of: keepAliveEnabled) { _, enabled in
+            // Location permission powers the background runtime (the values
+            // are never read); ask on first enable so backgrounding can
+            // engage it without a surprise prompt later.
+            if enabled { keepAlive.requestPermission() }
         }
     }
 

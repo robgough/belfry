@@ -29,6 +29,20 @@ final class SessionSurfaceStore {
         activatedSessionIDs.append(sessionID)
     }
 
+    /// Background suspension: quiesce every workspace's connection but KEEP
+    /// the workspaces and their rendered surfaces. Foregrounding then shows
+    /// the last content instantly while `resumeAll()` reattaches behind it —
+    /// as opposed to `teardownAll()`, which makes every return a cold start.
+    func suspendAll() {
+        for (_, workspace) in workspaces { workspace.stop() }
+    }
+
+    /// Reconnect every kept workspace after `suspendAll()`. Each re-runs its
+    /// tmux attach; the surface repaints in place when the stream resumes.
+    func resumeAll() {
+        for (_, workspace) in workspaces { workspace.start() }
+    }
+
     /// Tear down every surface (used when the host disconnects).
     func teardownAll() {
         for (_, workspace) in workspaces { workspace.stop() }
