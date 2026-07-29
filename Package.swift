@@ -25,11 +25,11 @@ let package = Package(
             from: "2.9.3"
         ),
         // Syntax highlighting for the file pane's code previews (highlight.js
-        // via JavaScriptCore — works on both platforms, no network).
-        .package(
-            url: "https://github.com/raspu/Highlightr",
-            from: "2.2.0"
-        ),
+        // via JavaScriptCore — works on both platforms, no network). Vendored
+        // (see vendor/Highlightr/LOCAL_PATCHES.md): upstream's Bundle.module
+        // lookup fatalErrors in the swift-build-packaged .app, which crashed
+        // every code preview in shipped builds.
+        .package(path: "vendor/Highlightr"),
     ],
     targets: [
         // The macOS app. `Sources/BelfryKit` is the platform-neutral core,

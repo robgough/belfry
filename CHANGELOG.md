@@ -2,6 +2,21 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.07.29] — 2026-07-29
+
+### Fixed
+
+- **macOS: previewing a file from the file pane crashed the app.** Opening or
+  Quick Looking any text file routed to the syntax-highlighted code viewer,
+  whose highlighter (Highlightr) loads its highlight.js + themes through
+  SwiftPM's generated `Bundle.module` — which, in the packaged .app, looks
+  only at the bundle root (unshippable in a signed app) and the CI build
+  machine's absolute path, then calls `fatalError`. Dev builds never hit it
+  because the resource bundle sits next to the bare binary. Highlightr is now
+  vendored (vendor/Highlightr, see LOCAL_PATCHES.md) with a non-trapping
+  lookup that finds the bundle in Contents/Resources, and make_app.sh ships
+  the build's resource bundles there.
+
 ## [2026.07.23] — 2026-07-25
 
 ### Added

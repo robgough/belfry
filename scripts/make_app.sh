@@ -63,6 +63,13 @@ if [ "${UNIVERSAL:-0}" = "1" ]; then
         # triples resolve to the same bin path, so the second would clobber it.
         cp "$SLICE_BIN/Belfry" "$STAGE/Belfry.$ARCH"
         cp "$SLICE_BIN/belfry-askpass" "$STAGE/belfry-askpass.$ARCH"
+        # SwiftPM resource bundles are arch-independent; either slice's copy works.
+        for b in "$SLICE_BIN"/*.bundle; do
+            if [ -d "$b" ]; then
+                rm -rf "$STAGE/$(basename "$b")"
+                cp -R "$b" "$STAGE/"
+            fi
+        done
     done
     BINDIR="$STAGE"
     lipo -create "$STAGE/Belfry.arm64" "$STAGE/Belfry.x86_64" -output "$STAGE/Belfry"
@@ -84,6 +91,17 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 cp "$BIN" "$APP/Contents/MacOS/Belfry"
 # Sibling of the main binary so SSHControl.askpassEnvironment() finds it.
 cp "$ASKPASS" "$APP/Contents/MacOS/belfry-askpass"
+# SwiftPM resource bundles (Highlightr's highlight.js + themes, SwiftTerm's
+# shaders). The vendored Highlightr resolves these from Contents/Resources —
+# see vendor/Highlightr/LOCAL_PATCHES.md; without the bundle, every code
+# preview fatalErrored in shipped builds.
+for b in "$BINDIR"/*.bundle; do
+    if [ -d "$b" ]; then
+        ditto "$b" "$APP/Contents/Resources/$(basename "$b")"
+    fi
+done
+[ -d "$APP/Contents/Resources/Highlightr_Highlightr.bundle" ] \
+    || { echo "✗ Highlightr_Highlightr.bundle missing from build products"; exit 1; }
 # Compile the Icon Composer icon: Assets.car carries the Liquid Glass icon
 # (macOS 26+) and actool renders AppIcon.icns as the flat fallback for older
 # systems. Quiet on success, same rationale as build() above.

@@ -11,9 +11,10 @@ options:
 packages:
   Termini:
     path: vendor/Termini
+  # Vendored (see vendor/Highlightr/LOCAL_PATCHES.md): upstream's Bundle.module
+  # lookup fatalErrors in the swift-build-packaged macOS .app.
   Highlightr:
-    url: https://github.com/raspu/Highlightr
-    from: "2.2.0"
+    path: vendor/Highlightr
 targets:
   BelfryiOS:
     type: application
