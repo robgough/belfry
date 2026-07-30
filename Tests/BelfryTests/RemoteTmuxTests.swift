@@ -123,3 +123,123 @@ struct RemoteTmuxPreludeTests {
         #expect(!path.contains("boom"))
     }
 }
+
+/// `RemoteTmux.agentFreshness` keeps `~/.ssh/belfry-agent.sock` pointed at a
+/// live forwarded agent socket (GitHub issue #1). These run the real fragment
+/// against real socket inodes — a bound-then-closed unix socket keeps its
+/// file type, which is all `[ -S ]` inspects — in a throwaway $HOME.
+struct AgentFreshnessTests {
+    /// A fresh fake home per test, so link state can't leak between them.
+    private func makeHome(_ name: String) throws -> String {
+        let home = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("belfry-agent-\(name)-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        return home
+    }
+
+    /// Creates a real socket inode at `path` (bind + close; the inode stays).
+    private func makeSocket(at path: String) throws {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        proc.arguments = ["-c", "import socket; socket.socket(socket.AF_UNIX).bind('\(path)')"]
+        try proc.run()
+        proc.waitUntilExit()
+        #expect(proc.terminationStatus == 0)
+    }
+
+    /// Runs the fragment with the given env, returning the adopted SSH_AUTH_SOCK.
+    private func runFragment(home: String, authSock: String?) throws -> String {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        var env = ["-i", "HOME=\(home)", "PATH=/usr/bin:/bin"]
+        if let authSock { env.append("SSH_AUTH_SOCK=\(authSock)") }
+        proc.arguments = env + [
+            "/bin/sh", "-c", RemoteTmux.agentFreshness + "echo \"$SSH_AUTH_SOCK\"",
+        ]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        try proc.run()
+        let out = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        return String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func linkDestination(home: String) -> String? {
+        try? FileManager.default.destinationOfSymbolicLink(
+            atPath: home + "/.ssh/belfry-agent.sock")
+    }
+
+    @Test func createsTheLinkAndAdoptsIt() throws {
+        let home = try makeHome("create")
+        let sock = home + "/fwd.sock"
+        try makeSocket(at: sock)
+
+        let adopted = try runFragment(home: home, authSock: sock)
+
+        #expect(adopted == home + "/.ssh/belfry-agent.sock")
+        #expect(linkDestination(home: home) == sock)
+    }
+
+    @Test func retargetsADeadLink() throws {
+        // The reconnect case: the link points at a socket whose connection died.
+        let home = try makeHome("retarget")
+        try FileManager.default.createDirectory(
+            atPath: home + "/.ssh", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: home + "/.ssh/belfry-agent.sock", withDestinationPath: home + "/gone.sock")
+        let fresh = home + "/fresh.sock"
+        try makeSocket(at: fresh)
+
+        let adopted = try runFragment(home: home, authSock: fresh)
+
+        #expect(adopted == home + "/.ssh/belfry-agent.sock")
+        #expect(linkDestination(home: home) == fresh)
+    }
+
+    @Test func leavesALiveLinkAlone() throws {
+        // A second channel arrives while the first channel's socket still
+        // lives: repointing would tie the link to whichever channel ran last.
+        let home = try makeHome("keep")
+        let first = home + "/first.sock"
+        let second = home + "/second.sock"
+        try makeSocket(at: first)
+        try makeSocket(at: second)
+        try FileManager.default.createDirectory(
+            atPath: home + "/.ssh", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: home + "/.ssh/belfry-agent.sock", withDestinationPath: first)
+
+        let adopted = try runFragment(home: home, authSock: second)
+
+        #expect(adopted == home + "/.ssh/belfry-agent.sock")
+        #expect(linkDestination(home: home) == first, "a live link must not be repointed")
+    }
+
+    @Test func noAgentIsACompleteNoOp() throws {
+        let home = try makeHome("noop")
+
+        let adopted = try runFragment(home: home, authSock: nil)
+
+        #expect(adopted.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: home + "/.ssh"),
+                "no forwarded agent must mean no writes at all")
+    }
+
+    @Test func alreadyStablePathIsUntouched() throws {
+        // A session whose environment already carries the stable path (every
+        // pane after the first connection) must pass through unchanged.
+        let home = try makeHome("stable")
+        let sock = home + "/fwd.sock"
+        try makeSocket(at: sock)
+        try FileManager.default.createDirectory(
+            atPath: home + "/.ssh", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: home + "/.ssh/belfry-agent.sock", withDestinationPath: sock)
+
+        let adopted = try runFragment(home: home, authSock: home + "/.ssh/belfry-agent.sock")
+
+        #expect(adopted == home + "/.ssh/belfry-agent.sock")
+        #expect(linkDestination(home: home) == sock)
+    }
+}

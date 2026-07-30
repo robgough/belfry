@@ -162,9 +162,11 @@ enum TmuxTransport: Hashable, Sendable {
             // The remote command goes through RemoteTmux: a bare `tmux` word
             // is invisible to the non-interactive remote shell's PATH when
             // tmux came from Homebrew (zsh:1: command not found: tmux).
+            // These specs are the long-lived channels (control client, session
+            // attaches) — the ones that keep the agent symlink fresh.
             return TerminiProcessSpec(
                 executableURL: URL(fileURLWithPath: "/usr/bin/ssh"),
-                arguments: ["-t"] + SSHControl.options + [alias, RemoteTmux.command(argv: args)],
+                arguments: ["-t"] + SSHControl.options + [alias, RemoteTmux.longLivedCommand(argv: args)],
                 environment: SSHControl.askpassEnvironment(),
                 workingDirectoryURL: home
             )

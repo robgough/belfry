@@ -96,6 +96,44 @@ enum RemoteTmux {
         prelude + "exec \"$TB\" \(args)"
     }
 
+    /// Agent-forwarding freshness (GitHub issue #1): a forwarded SSH agent
+    /// socket dies with the connection that carried it, so long-lived tmux
+    /// sessions accumulate shells whose `SSH_AUTH_SOCK` points at a corpse —
+    /// git/ssh in old panes silently lose the agent after every reconnect.
+    ///
+    /// The standard remedy, done for the user: keep a stable per-user symlink
+    /// (`~/.ssh/belfry-agent.sock`) pointed at a *live* forwarded socket and
+    /// adopt it as `SSH_AUTH_SOCK` before tmux starts. tmux's default
+    /// `update-environment` list includes SSH_AUTH_SOCK, so every attach
+    /// pushes the stable path into the session; shells capture a path that
+    /// never changes, and reconnecting merely retargets the link under them.
+    ///
+    /// Details that matter:
+    /// - Only retarget when the link is dead: each ssh channel gets its own
+    ///   forwarded socket, and repointing on every channel would tie the link
+    ///   to whichever channel ran last (short exec channels die in seconds).
+    ///   This is also why only the long-lived channels (control client,
+    ///   session attaches — see `tmuxProcessSpec`) run the fragment at all.
+    /// - `rm -f` + `ln -s` rather than `ln -sfn`: the guard means the target
+    ///   is absent or a dangling symlink, and this pair is portable across
+    ///   GNU/BSD/busybox where `-n`'s dangling-symlink handling isn't.
+    /// - No agent forwarded (`-S` fails) → complete no-op: Belfry never turns
+    ///   forwarding on; the user's ssh config decides that.
+    static let agentFreshness: String =
+        "if [ -S \"$SSH_AUTH_SOCK\" ]; then "
+        + "BAS=\"$HOME/.ssh/belfry-agent.sock\"; "
+        + "if [ \"$SSH_AUTH_SOCK\" != \"$BAS\" ]; then "
+        + "if [ ! -S \"$BAS\" ]; then mkdir -p \"$HOME/.ssh\"; "
+        + "rm -f \"$BAS\"; ln -s \"$SSH_AUTH_SOCK\" \"$BAS\" 2>/dev/null; fi; "
+        + "[ -S \"$BAS\" ] && export SSH_AUTH_SOCK=\"$BAS\"; "
+        + "fi; fi; "
+
+    /// The command for channels that live as long as the app's link to the
+    /// host: same as `command(argv:)` plus agent-socket freshening.
+    static func longLivedCommand(argv: [String]) -> String {
+        agentFreshness + command(argv: argv)
+    }
+
     /// Argv-style variant: ssh joins remote-command words with spaces and the
     /// remote shell re-parses them, so each word is single-quoted (this also
     /// makes session names with spaces survive the trip).

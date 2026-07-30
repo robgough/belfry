@@ -6,6 +6,15 @@ All notable changes to Belfry are documented here.
 
 ### Fixed
 
+- **SSH agent forwarding survives reconnects** (macOS, #1). A forwarded
+  agent socket dies with its connection, so long-lived tmux sessions
+  accumulated shells pointing at dead `SSH_AUTH_SOCK` paths — git/ssh in
+  old panes silently lost the agent. Belfry's long-lived channels now keep
+  `~/.ssh/belfry-agent.sock` pointed at a live forwarded socket and adopt
+  it before tmux starts, so every pane captures a path that stays valid
+  across reconnects. No-op when nothing is forwarded; Belfry never turns
+  forwarding on itself.
+
 - **iOS: app-switching with live output crashed the app.** Since the warm-
   resume / Keep Alive work, SSH output keeps flowing after backgrounding —
   and every output batch triggered a Metal draw on the ghostty surface.
