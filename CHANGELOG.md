@@ -6,6 +6,17 @@ All notable changes to Belfry are documented here.
 
 ### Fixed
 
+- **iOS: app-switching with live output crashed the app.** Since the warm-
+  resume / Keep Alive work, SSH output keeps flowing after backgrounding —
+  and every output batch triggered a Metal draw on the ghostty surface.
+  iOS kills any process that submits GPU work in the background, so
+  bouncing to another app while a window was streaming (a working Claude,
+  a build) reliably died within seconds. The old SwiftTerm renderer drew
+  with CoreGraphics, which the background allows — the ghostty renderer
+  made the same pattern fatal. All draw paths now pause on
+  `didEnterBackground` (terminal state still absorbs output) with one
+  catch-up draw on return.
+
 - **macOS: previewing a file from the file pane crashed the app.** Opening or
   Quick Looking any text file routed to the syntax-highlighted code viewer,
   whose highlighter (Highlightr) loads its highlight.js + themes through

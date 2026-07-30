@@ -131,17 +131,46 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
     public var isRenderVisible = true {
         didSet {
             guard oldValue != isRenderVisible else { return }
-            renderLink?.isPaused = !isRenderVisible
+            renderLink?.isPaused = !isRenderVisible || appIsBackgrounded
             if let surface {
-                ghostty_surface_set_occlusion(surface, isRenderVisible)
+                ghostty_surface_set_occlusion(surface, isRenderVisible && !appIsBackgrounded)
             }
-            if isRenderVisible, needsDrawOnReveal {
+            if isRenderVisible, needsDrawOnReveal, !appIsBackgrounded {
                 needsDrawOnReveal = false
                 drawAfterRemoteOutput()
             }
         }
     }
     private var needsDrawOnReveal = false
+
+    // MARK: Belfry patch — no GPU work while backgrounded.
+    /// iOS kills any process that submits Metal work while backgrounded, and
+    /// Belfry deliberately keeps SSH links (and their output) alive across the
+    /// background grace window / Keep Alive — so remote output used to trigger
+    /// `ghostty_surface_draw` from the background and take the whole app down.
+    /// The terminal state keeps absorbing output (CPU-side, allowed); every
+    /// draw path is gated here and a catch-up draw runs on return.
+    private var appIsBackgrounded = false
+
+    @objc private func appDidEnterBackground() {
+        appIsBackgrounded = true
+        renderLink?.isPaused = true
+        if let surface {
+            ghostty_surface_set_occlusion(surface, false)
+        }
+    }
+
+    @objc private func appWillEnterForeground() {
+        appIsBackgrounded = false
+        renderLink?.isPaused = !isRenderVisible
+        if let surface {
+            ghostty_surface_set_occlusion(surface, isRenderVisible)
+        }
+        if isRenderVisible, needsDrawOnReveal {
+            needsDrawOnReveal = false
+            drawAfterRemoteOutput()
+        }
+    }
 
     /// The renderer reported unhealthy and the surface was rebuilt (fresh
     /// terminal state — libghostty has no terminal/surface split, so content
@@ -183,6 +212,14 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
         contentScaleFactor = UIScreen.main.scale
         isMultipleTouchEnabled = true
         addGestureRecognizer(scrollPanGestureRecognizer)
+        // Belfry patch: gate GPU work on app lifecycle (see appIsBackgrounded).
+        appIsBackgrounded = UIApplication.shared.applicationState == .background
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
     @available(*, unavailable)
@@ -210,7 +247,7 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
         synchronizeGhosttyLayerGeometry()
         updateSurfaceSize()
         startRenderLoopIfNeeded()
-        renderLink?.isPaused = !isRenderVisible   // Belfry patch: honour gating from the start
+        renderLink?.isPaused = !isRenderVisible || appIsBackgrounded   // Belfry patch: honour gating from the start
         guard autoFocusOnAttach else { return }   // Belfry patch: manual keyboard UX
         Task { @MainActor in
             _ = self.becomeFirstResponder()
@@ -333,7 +370,7 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
 
     @objc
     private func drawFrame() {
-        guard let surface, isRenderVisible else { return }
+        guard let surface, isRenderVisible, !appIsBackgrounded else { return }
         ghostty_surface_draw(surface)
     }
 
@@ -380,14 +417,18 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
 
         guard let created = ghostty_surface_new(app, &cfg) else { return }
         surface = created
-        if !isRenderVisible {                     // Belfry patch: born-hidden warm surface
+        if !isRenderVisible || appIsBackgrounded { // Belfry patch: born-hidden warm surface
             ghostty_surface_set_occlusion(created, false)
         }
         synchronizeGhosttyLayerGeometry()
         setSurfaceFocus(true)
         updateSurfaceSize()
-        ghostty_surface_refresh(created)
-        ghostty_surface_draw(created)
+        if !appIsBackgrounded {                   // Belfry patch: no background Metal
+            ghostty_surface_refresh(created)
+            ghostty_surface_draw(created)
+        } else {
+            needsDrawOnReveal = true
+        }
         reportSizeIfNeeded()
         reportDiagnostics()
         scheduleInitialAppearance()
@@ -422,6 +463,14 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
         let width = UInt32(bounds.width * scale)
         let height = UInt32(bounds.height * scale)
         ghostty_surface_set_size(surface, width, height)
+        // Belfry patch: size bookkeeping is CPU-side and stays correct in the
+        // background; the draw itself must wait for foreground (layout can run
+        // during background snapshotting).
+        guard !appIsBackgrounded else {
+            needsDrawOnReveal = true
+            reportSizeIfNeeded()
+            return
+        }
         ghostty_surface_refresh(surface)
         ghostty_surface_draw(surface)
         reportSizeIfNeeded()
@@ -474,7 +523,9 @@ open class SurfaceContainerView: UIView, UIKeyInput, UITextInputTraits, UIGestur
 
     private func drawAfterRemoteOutput() {
         guard let surface else { return }
-        guard isRenderVisible else {              // Belfry patch: gate hidden draws
+        // Belfry patch: hidden or backgrounded surfaces absorb output without
+        // drawing — backgrounded Metal submission is a process kill on iOS.
+        guard isRenderVisible, !appIsBackgrounded else {
             needsDrawOnReveal = true
             return
         }
@@ -928,7 +979,9 @@ extension SurfaceContainerView {
         // A couple of runloop turns for the initial tick + appearance, one
         // explicit draw, then release. 3s is arbitrary but far past first use.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let surface = view.surface {
+            // Belfry patch: skip if the app backgrounded since launch.
+            if let surface = view.surface,
+               UIApplication.shared.applicationState != .background {
                 ghostty_surface_draw(surface)
             }
         }

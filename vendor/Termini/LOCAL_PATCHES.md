@@ -228,3 +228,18 @@ explicitly-unstable embedding API, and we need to patch its NSView resize path.
   doesn't reliably propagate out of NIOSSH child channels). Live-verified by
   `Tests/TerminiSSHTests/LocalForwardLiveTests.swift` (env-gated; skips
   without TERMINI_LIVE_SSH_* configuration).
+
+- **`TerminiSurfaceView_iOS.swift` — no Metal submission while backgrounded.**
+  iOS kills a process that submits GPU work in the background, and Belfry
+  deliberately keeps SSH links flowing after backgrounding (the ~30 s grace
+  window; minutes with Keep Alive) — so remote output kept triggering
+  `ghostty_surface_draw` from a backgrounded app and the kill looked like
+  random "Belfry crashed" reports on every app switch with output streaming.
+  The view now observes `didEnterBackground`/`willEnterForeground`:
+  backgrounded, the display link pauses, the surface is marked occluded, and
+  every draw path (`drawFrame`, `drawAfterRemoteOutput`, `updateSurfaceSize`,
+  `createSurfaceIfNeeded`, the prewarm draw) defers with `needsDrawOnReveal`;
+  terminal state still absorbs output (CPU-side, permitted). Foregrounding
+  restores the link/occlusion and runs one catch-up draw. Size bookkeeping
+  (`ghostty_surface_set_size`) still applies in the background so layout from
+  snapshotting stays correct without drawing.
