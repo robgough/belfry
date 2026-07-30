@@ -173,14 +173,14 @@
   }
   .badge-demo .row { display: flex; align-items: center; gap: 0.6rem; }
   .badge-demo .tree { color: var(--overlay); }
-  .pill {
-    margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.55rem;
-    border-radius: 99px; font-weight: 600;
-  }
-  .pill.working { background: rgba(137,180,250,.16); color: var(--blue); animation: pulse 1.6s ease-in-out infinite; }
-  .pill.waiting { background: rgba(232,163,61,.16); color: var(--bell); animation: pulse 1.6s ease-in-out .8s infinite; }
+  /* the app's badge language: coloured braille cells, icon-first, no capsule */
+  .chip { margin-left: auto; font-size: 0.78rem; font-weight: 600; }
+  .chip.working { color: var(--blue); animation: pulse 1.6s ease-in-out infinite; }
+  .chip.agents  { color: #cba6f7; animation: pulse 1.6s ease-in-out .4s infinite; }
+  .chip.idle    { color: var(--green); }
+  .chip.waiting { color: var(--bell); animation: pulse 1.6s ease-in-out .8s infinite; }
   @keyframes pulse { 50% { opacity: 0.45; } }
-  @media (prefers-reduced-motion: reduce) { .pill { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .chip { animation: none; } }
   .claude p { color: var(--subtext); max-width: 52ch; }
   .claude p strong { color: var(--text); }
 
@@ -281,7 +281,7 @@
            data (the old capture showed a real hostname). Restore as:
            <figure>
              <img src="images/ipad.png" alt="…" width="…" height="…">
-             <figcaption>iPadOS — SwiftTerm over in-process SSH, key bar included</figcaption>
+             <figcaption>iPadOS — libghostty over in-process SSH, key dock included</figcaption>
            </figure> -->
     </div>
   </section>
@@ -290,12 +290,12 @@
     <h2><span class="idx">2:</span>features</h2>
     <ul class="features">
       <li>
-        <span class="k">control mode</span>
-        <p>The sidebar tree is driven by <strong>tmux control mode</strong> (<code>tmux&nbsp;-C</code>). On tmux ≥ 3.2 updates arrive by server push — near-zero idle traffic; older servers fall back to a light poll.</p>
-      </li>
-      <li>
         <span class="k">instant switching</span>
         <p>Every visited session keeps a <strong>warm, attached surface</strong>. Changing sessions is a visibility toggle, not a re-attach.</p>
+      </li>
+      <li>
+        <span class="k">pin what matters</span>
+        <p>Pin a session — or a single window — and it floats to a <strong>Pinned section</strong> at the top of the sidebar, above every host, with its live Claude badge along for the ride.</p>
       </li>
       <li>
         <span class="k">the file pane</span>
@@ -311,15 +311,15 @@
       </li>
       <li>
         <span class="k">battery-conscious</span>
-        <p>Hidden surfaces absorb output <strong>without rendering</strong>, badges animate in the render server, and the idle app measures ~0% CPU.</p>
+        <p>Hidden sessions absorb output <strong>without rendering</strong>, and the idle app measures ~0% CPU.</p>
       </li>
       <li>
         <span class="k">native rendering</span>
-        <p>macOS terminals render with <strong>libghostty</strong>; iPad uses <strong>SwiftTerm</strong> over SwiftNIO SSH. Bundled Maple Mono NF keeps nerd-font glyphs sharp on iPad.</p>
+        <p>Terminals on both platforms render with <strong>libghostty</strong> — the engine inside Ghostty. On the Mac it picks up your Ghostty theme; bundled Maple Mono NF keeps nerd-font glyphs sharp on iPad.</p>
       </li>
       <li>
         <span class="k">made for remote work</span>
-        <p>SSH connection sharing and a native askpass dialog on macOS; Keychain-stored credentials, touch scrollback and a background grace period on iPad. Pairs beautifully with <a href="https://tailscale.com">Tailscale</a>.</p>
+        <p>SSH connection sharing and a native askpass dialog on macOS. On iPad: Keychain-stored credentials, a floating key dock with saved commands, instant warm resume after backgrounding — plus optional <strong>Keep Alive</strong> for up to an hour. Pairs beautifully with <a href="https://tailscale.com">Tailscale</a>.</p>
       </li>
     </ul>
   </section>
@@ -327,12 +327,14 @@
   <section id="claude">
     <h2><span class="idx">3:</span>claude&nbsp;code&nbsp;badges</h2>
     <div class="claude">
-      <div class="badge-demo" role="img" aria-label="Sidebar windows with live Claude status badges: claude is working, review is waiting">
+      <div class="badge-demo" role="img" aria-label="Sidebar windows with live Claude status dots: claude is working, docs has agents still running, tidy is idle, review is waiting for input">
         <div class="row"><span class="tree">└─</span> editor</div>
-        <div class="row"><span class="tree">└─</span> claude <span class="pill working">✳ Working</span></div>
-        <div class="row"><span class="tree">└─</span> review <span class="pill waiting">✳ Waiting</span></div>
+        <div class="row"><span class="tree">└─</span> claude <span class="chip working">⣷ Working</span></div>
+        <div class="row"><span class="tree">└─</span> docs <span class="chip agents">⣽ Agents</span></div>
+        <div class="row"><span class="tree">└─</span> tidy <span class="chip idle">⣿ Idle</span></div>
+        <div class="row"><span class="tree">└─</span> review <span class="chip waiting">⣿ Waiting</span></div>
       </div>
-      <p>Run Claude Code inside your tmux windows and the sidebar shows what it's up to: <strong>Working</strong>, or <strong>Waiting on you</strong>. Optional per-host <a href="https://github.com/robgough/belfry/blob/main/docs/claude-status-hooks.md">status hooks</a> install (and uninstall) with one click from the UI, and on macOS the Dock badge counts the windows waiting for your input — so you notice from across the room.</p>
+      <p>Run Claude Code inside your tmux windows and the sidebar shows what every one is up to, at a glance: <strong>Working</strong>, <strong>Agents</strong> still running after its turn, <strong>Idle</strong>, or <strong>Waiting on you</strong>. Optional per-host <a href="https://github.com/robgough/belfry/blob/main/docs/claude-status-hooks.md">status hooks</a> install (and uninstall) with one click, and label each pin with its Claude session's name. On macOS the Dock badge counts only the windows waiting for your input — you notice from across the room, and only when it matters.</p>
     </div>
   </section>
 
@@ -368,7 +370,7 @@ open BelfryiOS.xcodeproj  <span class="c"># set your team, run</span></pre>
 
   <footer>
     <img class="icon" src="images/icon-180.png" alt="" width="44" height="44">
-    <p>MIT © <a href="https://robgough.net">Rob Gough</a>. Built on <a href="https://github.com/arach/Termini">Termini</a>, <a href="https://github.com/ghostty-org/ghostty">Ghostty</a>, <a href="https://github.com/migueldeicaza/SwiftTerm">SwiftTerm</a> and <a href="https://github.com/subframe7536/maple-font">Maple Mono</a> (OFL). A belfry is where the bell hangs — the sessions were always up there; now you can see them ring.</p>
+    <p>MIT © <a href="https://robgough.net">Rob Gough</a>. Built on <a href="https://github.com/arach/Termini">Termini</a>, <a href="https://github.com/ghostty-org/ghostty">Ghostty</a>, <a href="https://github.com/migueldeicaza/SwiftTerm">SwiftTerm</a>, <a href="https://github.com/raspu/Highlightr">Highlightr</a> and <a href="https://github.com/subframe7536/maple-font">Maple Mono</a> (OFL). A belfry is where the bell hangs — the sessions were always up there; now you can see them ring.</p>
   </footer>
 
 </main>
