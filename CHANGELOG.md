@@ -2,7 +2,7 @@
 
 All notable changes to Belfry are documented here.
 
-## [2026.07.29] — 2026-07-29
+## [2026.07.24] — 2026-07-30
 
 ### Fixed
 
