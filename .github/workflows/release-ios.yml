@@ -163,17 +163,28 @@ jobs:
           if-no-files-found: error
 
       # Only when we actually uploaded and no tag exists yet (an iOS-only or
-      # iOS-leading release). A joint release was already tagged by macOS.
+      # iOS-leading release). A joint release was already tagged by macOS —
+      # and because tag_exists is a snapshot from the start of the run, a
+      # joint release dispatched in parallel can grow the tag mid-run: the
+      # push re-checks at push time and treats lost races as the joint case
+      # (the tag exists, which is the desired end state).
       - name: Tag
         if: ${{ !inputs.dry_run && steps.v.outputs.tag_exists == '0' }}
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
+          if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null 2>&1; then
+            echo "› tag v$VERSION appeared mid-run — joint release, won't re-tag"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v$VERSION" -m "Belfry $VERSION (iOS)"
-          git push origin "v$VERSION"
+          git push origin "v$VERSION" || {
+            git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null
+            echo "› lost the tag race to the macOS run — joint release, fine"
+          }
 
       - name: Say what's left to do
         if: ${{ !inputs.dry_run }}

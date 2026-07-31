@@ -176,16 +176,26 @@ jobs:
           path: Belfry-${{ steps.v.outputs.version }}.zip
           if-no-files-found: error
 
+      # A joint release dispatched in parallel can race this push with the iOS
+      # run's; whoever loses re-checks and accepts the existing tag (same
+      # commit, same version — the desired end state either way).
       - name: Tag
         if: ${{ !inputs.dry_run }}
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
+          if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null 2>&1; then
+            echo "› tag v$VERSION already exists — joint release, won't re-tag"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v$VERSION" -m "Belfry $VERSION"
-          git push origin "v$VERSION"
+          git push origin "v$VERSION" || {
+            git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null
+            echo "› lost the tag race to the iOS run — joint release, fine"
+          }
 
       - name: Create the GitHub release
         if: ${{ !inputs.dry_run }}
