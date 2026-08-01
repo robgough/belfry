@@ -2,6 +2,32 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.08.1] — 2026-08-01
+
+### Added
+
+- **Browser tabs (macOS).** Every session now carries its own Safari-style
+  tab strip above the terminal — the terminal rides as the permanent first
+  tab, web tabs follow — so checking the dev server or the docs never means
+  leaving Belfry. Open one from the globe toolbar button or ⌘T; ⌘W closes
+  the active web tab (and still closes the window from the terminal), ⌃Tab
+  cycles, ⌘L jumps to the address bar, ⌘+/− zoom the page. Background tabs
+  stay warm across project switches — HMR websockets keep flowing — while
+  WebKit throttles their rendering. Tabs persist per project (host +
+  session name, like pins), so a session reopens with its tabs after a
+  tmux server restart or reboot.
+
+- **Browser profiles.** Named, colour-coded cookie silos: tabs on the same
+  profile share logins, tabs on different profiles are fully isolated —
+  sign into an app as two different users side by side. New tabs inherit
+  the active tab's profile; the profile in use is spelled out next to the
+  address bar. Includes a per-tab "Use Safari User Agent" toggle for sites
+  (notably Google sign-in) that reject embedded browsers.
+
+- **Web Inspector.** Each tab gets the full WebKit inspector — elements,
+  console, network — from the </> button, docked into the tab or as its
+  own window; "Inspect Element" in the context menu too.
+
 ## [2026.07.24] — 2026-07-30
 
 ### Fixed
