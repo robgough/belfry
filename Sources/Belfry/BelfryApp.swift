@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Darwin
+import WebKit
 
 @main
 struct BelfryApp: App {
@@ -18,6 +19,25 @@ struct BelfryApp: App {
         return AppModel(hosts: hosts)
     }
 
+    /// ⌘+/⌘−/⌘0: page zoom while a web tab is showing, terminal font otherwise.
+    private func adjustSize(_ step: Int) {
+        if let web = model.browserTabs.activeWebTab?.webView {
+            web.pageZoom = min(max(web.pageZoom + Double(step) * 0.1, 0.5), 3.0)
+        } else if step > 0 {
+            model.increaseFont()
+        } else {
+            model.decreaseFont()
+        }
+    }
+
+    private func resetSize() {
+        if let web = model.browserTabs.activeWebTab?.webView {
+            web.pageZoom = 1.0
+        } else {
+            model.resetFont()
+        }
+    }
+
     var body: some Scene {
         // A single, unique window (not a WindowGroup): ⌘N can't spawn a second
         // window that would double-start the control clients and fight over the
@@ -31,18 +51,28 @@ struct BelfryApp: App {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Updater.controller?.checkForUpdates(nil) }
             }
+            // Browser tabs for the selected session. "Close Browser Tab" is
+            // only *present* while a web tab is showing, so terminal-active
+            // ⌘W keeps meaning Close Window (and the quit-on-last-window
+            // path behind it). Command content can't observe @Observable
+            // state directly (it never re-evaluates), so the active tab
+            // arrives as a focused scene value published by RootView.
+            CommandGroup(after: .newItem) {
+                BrowserTabCommands(store: model.browserTabs)
+            }
             // Extend the SYSTEM View menu (the one NavigationSplitView owns)
             // rather than CommandMenu("View"), which would add a second menu
-            // with the same name next to it.
+            // with the same name next to it. With a web tab showing, the size
+            // keys zoom the page instead of the terminal font.
             CommandGroup(after: .sidebar) {
-                Button("Increase Font Size") { model.increaseFont() }
+                Button("Increase Font Size") { adjustSize(+1) }
                     .keyboardShortcut("+", modifiers: .command)
                 // Also catch ⌘= (the +/= key without Shift), which doesn't match "+".
-                Button("Increase Font Size") { model.increaseFont() }
+                Button("Increase Font Size") { adjustSize(+1) }
                     .keyboardShortcut("=", modifiers: .command)
-                Button("Decrease Font Size") { model.decreaseFont() }
+                Button("Decrease Font Size") { adjustSize(-1) }
                     .keyboardShortcut("-", modifiers: .command)
-                Button("Actual Size") { model.resetFont() }
+                Button("Actual Size") { resetSize() }
                     .keyboardShortcut("0", modifiers: .command)
             }
         }
@@ -64,6 +94,7 @@ struct RootView: View {
     /// session you were looking at.
     @State private var lastReadout: CachedReadout?
     @State private var showsFilePane = false
+    @State private var closeTabKeyMonitor: Any?
 
     private struct CachedReadout: Equatable {
         let selection: WindowSelection
@@ -101,14 +132,25 @@ struct RootView: View {
         return "reconnecting…"
     }
 
+    /// The web tab the detail pane is showing, when the selected session's
+    /// strip isn't on the terminal — the title bar shows the page, not tmux.
+    private var activeWebTab: BrowserTab? {
+        model.browserTabs.activeWebTab
+    }
+
     private var windowTitle: String {
-        readout?.primary ?? staleReadout?.primary ?? "Belfry"
+        if let tab = activeWebTab { return tab.displayTitle }
+        return readout?.primary ?? staleReadout?.primary ?? "Belfry"
     }
 
     /// The readout's second line, with the machine name tinted local/remote —
     /// the reason the visible title is custom: NSWindow.subtitle is a plain
     /// string, so a native subtitle can't carry the colour.
     private var secondaryLine: Text? {
+        if let tab = activeWebTab {
+            guard let url = tab.url else { return nil }
+            return Text(url.absoluteString)
+        }
         if let readout { return readout.secondaryText }
         if let stale = staleReadout { return stale.secondaryText + Text(" — \(staleStatusWord)") }
         return nil
@@ -123,7 +165,8 @@ struct RootView: View {
                     ToolbarItem(placement: .primaryAction) { addMenu }
                 }
         } detail: {
-            TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize)
+            TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize,
+                               browserTabs: model.browserTabs)
                 .background(AppTheme.windowBackground)
                 .terminalAttachments(hosts: model.hosts, selection: selection)
                 // The file pane rides in an inspector so the warm terminal
@@ -134,6 +177,17 @@ struct RootView: View {
                         .inspectorColumnWidth(min: 260, ideal: 320, max: 560)
                 }
                 .toolbar {
+                    // The tab strip only appears once a session has web tabs,
+                    // so this is the discoverable way into the first one.
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            model.browserTabs.openTabInCurrent()
+                        } label: {
+                            Label("New Browser Tab", systemImage: "globe")
+                        }
+                        .disabled(selection == nil)
+                        .help("Open a browser tab in this session (⌘T)")
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         TransfersButton(center: model.transferCenter)
                     }
@@ -188,7 +242,10 @@ struct RootView: View {
         .onChange(of: model.attentionCount, initial: true) { _, count in
             NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
         }
-        .task { model.startAll() }
+        .task {
+            model.startAll()
+            installCloseTabKeyMonitor()
+        }
         .sheet(item: $prompt) { prompt in
             PromptSheet(prompt: prompt, model: model)
         }
@@ -227,7 +284,14 @@ struct RootView: View {
     /// affordance as a draggable folder icon.
     private var titleReadout: some View {
         HStack(spacing: 8) {
-            if let url = localFolderURL {
+            if activeWebTab != nil {
+                // Browsing: the title is the page, so the cwd folder icon
+                // would mislead — but the Claude chip stays (glanceable
+                // session state is exactly why the browser lives in a tab).
+                Image(systemName: "globe")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            } else if let url = localFolderURL {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
                     .resizable()
                     .frame(width: 17, height: 17)
@@ -342,6 +406,27 @@ struct RootView: View {
         }
     }
 
+    /// ⌘W means "close the web tab" while one is showing, and Close Window
+    /// otherwise. Neither SwiftUI route can express that here: Commands
+    /// content doesn't observe @Observable models, and focused scene values
+    /// stall when an AppKit view (the WKWebView, the terminal surface) holds
+    /// first responder. A local event monitor sees the keystroke before menu
+    /// key-equivalent dispatch and consumes it only when a web tab is up, so
+    /// the terminal-active window-close path (and app quit behind it) is
+    /// untouched.
+    private func installCloseTabKeyMonitor() {
+        guard closeTabKeyMonitor == nil else { return }
+        closeTabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+                  event.charactersIgnoringModifiers == "w",
+                  let key = NSApp.keyWindow, !(key is NSPanel), key.isMainWindow,
+                  model.browserTabs.activeWebTab != nil
+            else { return event }
+            model.browserTabs.closeActiveTab()
+            return nil
+        }
+    }
+
     private var addMenu: some View {
         Menu {
             Button("Add Host…") { prompt = .addHost }
@@ -373,6 +458,29 @@ private extension View {
         } else {
             self
         }
+    }
+}
+
+/// Browser-tab menu items. Everything here is always present and always
+/// enabled (the store no-ops without a selected session): Commands content
+/// doesn't re-evaluate on @Observable changes, so any conditional item or
+/// .disabled state would freeze at its first value. ⌘W (close web tab) is
+/// deliberately NOT here — it needs to fall through to Close Window when the
+/// terminal is showing, which a menu item can't do; RootView's key monitor
+/// handles it.
+private struct BrowserTabCommands: View {
+    let store: BrowserTabStore
+
+    var body: some View {
+        Divider()
+        Button("New Browser Tab") { store.openTabInCurrent() }
+            .keyboardShortcut("t", modifiers: .command)
+        Button("Open Location") { store.focusURLField() }
+            .keyboardShortcut("l", modifiers: .command)
+        Button("Show Next Tab") { store.cycleCurrent(1) }
+            .keyboardShortcut(.tab, modifiers: .control)
+        Button("Show Previous Tab") { store.cycleCurrent(-1) }
+            .keyboardShortcut(.tab, modifiers: [.control, .shift])
     }
 }
 

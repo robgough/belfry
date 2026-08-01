@@ -16,6 +16,11 @@ final class AppModel {
     /// survive the file pane closing and selection changes.
     let transferCenter = TransferCenter()
 
+    /// Browser tabs for every session, across hosts (macOS detail pane).
+    /// App-lifetime for the same reason as transfers: tabs keep their pages
+    /// warm while the user works elsewhere.
+    let browserTabs = BrowserTabStore()
+
     /// Sessions/windows pinned to the top of the sidebar. New pins append;
     /// the user can rearrange by dragging.
     private(set) var pins: [PinnedItem]
@@ -50,6 +55,15 @@ final class AppModel {
         let stored = UserDefaults.standard.object(forKey: Self.fontSizeKey) as? Double
         self.fontSize = stored ?? Self.platformDefaultFontSize
         AppModel.current = self
+        hosts.forEach(wireBrowserPruning)
+    }
+
+    /// Browser tabs die with their tmux session (their persisted records
+    /// survive, like pins, and re-resolve by session name).
+    private func wireBrowserPruning(_ host: HostModel) {
+        host.onLivingSessions = { [weak self] ids in
+            self?.browserTabs.sessionDied(hostID: host.id, livingSessionIDs: ids)
+        }
     }
 
     func startAll() { hosts.forEach { $0.start() } }
@@ -107,6 +121,7 @@ final class AppModel {
     func adopt(_ host: HostModel) -> HostModel? {
         guard !hosts.contains(where: { $0.id == host.id }) else { return nil }
         hosts.append(host)
+        wireBrowserPruning(host)
         persist()
         host.start()
         return host

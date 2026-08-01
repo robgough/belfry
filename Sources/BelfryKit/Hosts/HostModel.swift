@@ -58,6 +58,12 @@ final class HostModel: Identifiable {
     private(set) var hooksStatus: HookStatus = .unknown
     private var didCheckHooks = false
 
+    /// Forwarded copy of the control client's living-sessions signal, for
+    /// owners with their own per-session state to prune (AppModel uses it to
+    /// tear down browser tabs whose session died). Survives reconnects — the
+    /// client closure is re-wired on every rebuild and calls through here.
+    var onLivingSessions: ((Set<String>) -> Void)?
+
     init(id: String, displayName: String, transport: any HostTransport) {
         self.id = id
         self.displayName = displayName
@@ -164,6 +170,7 @@ final class HostModel: Identifiable {
     private func wireClient() {
         client.onLivingSessions = { [weak self] ids in
             self?.surfaceStore.prune(livingSessionIDs: ids)
+            self?.onLivingSessions?(ids)
         }
         client.onConnected = { [weak self] in
             self?.everConnected = true
