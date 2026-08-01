@@ -61,6 +61,9 @@ struct TerminalDetailView: View {
                             tab: tab, store: browserTabs, key: key,
                             isVisible: key == selectedKey
                                 && browserTabs.active(for: key) == .web(tab.id))
+                            // Profile/user-agent changes rebuild the layer
+                            // (and its WKWebView) from a fresh configuration.
+                            .id(tab.configIdentity)
                     }
                 }
             }

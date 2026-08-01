@@ -22,6 +22,10 @@ final class BrowserTabStore {
         case web(UUID)
     }
 
+    /// The profile registry (named cookie silos). Owned here so everything
+    /// browser-related travels as one object.
+    let profiles: BrowserProfileStore
+
     private let persistence: BrowserTabPersistence
     private var records: [SessionTabsRecord]
 
@@ -41,8 +45,12 @@ final class BrowserTabStore {
     /// URL field when it changes.
     private(set) var urlFocusToken = 0
 
-    init(persistence: BrowserTabPersistence = BrowserTabPersistence()) {
+    init(persistence: BrowserTabPersistence = BrowserTabPersistence(),
+         profiles: BrowserProfileStore? = nil) {
         self.persistence = persistence
+        // Built here, not as a default argument — those evaluate outside
+        // the main actor, which BrowserProfileStore's init requires.
+        self.profiles = profiles ?? BrowserProfileStore()
         self.records = persistence.load()
     }
 
@@ -78,8 +86,10 @@ final class BrowserTabStore {
         nameByKey[key] = sessionName
         if tabsByKey[key] == nil {
             let record = records.first { $0.hostID == hostID && $0.sessionName == sessionName }
-            tabsByKey[key] = (record?.tabs ?? []).map {
-                BrowserTab(url: $0.url, profileID: $0.profileID)
+            tabsByKey[key] = (record?.tabs ?? []).map { saved in
+                let tab = BrowserTab(url: saved.url, profileID: saved.profileID)
+                tab.usesSafariUserAgent = saved.usesSafariUserAgent ?? false
+                return tab
             }
             if !sessionOrder.contains(key) { sessionOrder.append(key) }
         }
@@ -92,7 +102,9 @@ final class BrowserTabStore {
 
     @discardableResult
     func openTab(for key: SessionKey, url: URL? = nil) -> BrowserTab {
-        let tab = BrowserTab(url: url)
+        // A new tab stays in the context you're in: it inherits the active
+        // tab's profile (Safari's behaviour), defaulting only from terminal.
+        let tab = BrowserTab(url: url, profileID: activeWebTab(for: key)?.profileID)
         tabsByKey[key, default: []].append(tab)
         if !sessionOrder.contains(key) { sessionOrder.append(key) }
         activeByKey[key] = .web(tab.id)
@@ -134,6 +146,54 @@ final class BrowserTabStore {
 
     func setActive(_ active: ActiveTab, for key: SessionKey) {
         activeByKey[key] = active
+    }
+
+    // MARK: Profiles
+
+    /// Move a tab to another cookie silo. Profile is configuration-time for
+    /// WKWebView, so the live view is dropped; the layer's configIdentity
+    /// change rebuilds it and reloads the tab's URL in the new silo.
+    func setProfile(_ profileID: UUID?, for tabID: UUID, in key: SessionKey) {
+        guard let tab = tabs(for: key).first(where: { $0.id == tabID }),
+              tab.profileID != profileID else { return }
+        tab.teardown()
+        tab.profileID = profileID
+        persist(key)
+    }
+
+    /// Toggle the Safari user-agent masquerade (also configuration-time).
+    func setSafariUserAgent(_ enabled: Bool, for tabID: UUID, in key: SessionKey) {
+        guard let tab = tabs(for: key).first(where: { $0.id == tabID }),
+              tab.usesSafariUserAgent != enabled else { return }
+        tab.teardown()
+        tab.usesSafariUserAgent = enabled
+        persist(key)
+    }
+
+    /// Delete a profile everywhere: every tab using it (across all sessions,
+    /// including persisted records) reverts to the default silo, then the
+    /// profile and its on-disk website data go.
+    func deleteProfile(_ profileID: UUID) {
+        for key in sessionOrder {
+            var touched = false
+            for tab in tabs(for: key) where tab.profileID == profileID {
+                tab.teardown()
+                tab.profileID = nil
+                touched = true
+            }
+            if touched { persist(key) }
+        }
+        // Records for sessions not currently materialised.
+        var recordsChanged = false
+        for index in records.indices {
+            for tabIndex in records[index].tabs.indices
+            where records[index].tabs[tabIndex].profileID == profileID {
+                records[index].tabs[tabIndex].profileID = nil
+                recordsChanged = true
+            }
+        }
+        if recordsChanged { persistence.save(records) }
+        profiles.delete(profileID)
     }
 
     // MARK: Menu-command entry points (act on the current session)
@@ -197,7 +257,10 @@ final class BrowserTabStore {
         if !list.isEmpty {
             records.append(SessionTabsRecord(
                 hostID: key.hostID, sessionName: name,
-                tabs: list.map { .init(url: $0.url, profileID: $0.profileID) }))
+                tabs: list.map {
+                    .init(url: $0.url, profileID: $0.profileID,
+                          usesSafariUserAgent: $0.usesSafariUserAgent ? true : nil)
+                }))
         }
         persistence.save(records)
     }

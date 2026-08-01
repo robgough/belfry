@@ -18,8 +18,15 @@ final class BrowserTabStoreTests: XCTestCase {
         super.tearDown()
     }
 
+    /// Website-data deletions requested via BrowserProfileStore (the real
+    /// remover is injected away so tests never touch WebKit storage).
+    private var removedData: [UUID] = []
+
     private func makeStore() -> BrowserTabStore {
-        BrowserTabStore(persistence: persistence)
+        let profiles = BrowserProfileStore(
+            persistence: BrowserProfilePersistence(directory: tempDir),
+            removeData: { [weak self] id in self?.removedData.append(id) })
+        return BrowserTabStore(persistence: persistence, profiles: profiles)
     }
 
     private func select(_ store: BrowserTabStore, host: String = "local",
@@ -163,6 +170,116 @@ final class BrowserTabStoreTests: XCTestCase {
         XCTAssertEqual(persistence.load().count, 1)
         store.close(tab.id, for: key)
         XCTAssertEqual(persistence.load(), [])
+    }
+
+    // MARK: Profiles
+
+    func testProfilesPersistAcrossStores() {
+        let store = makeStore()
+        let profile = store.profiles.create(name: "Alice")
+
+        let reloaded = makeStore()
+        XCTAssertEqual(reloaded.profiles.profiles, [profile])
+        XCTAssertEqual(reloaded.profiles.name(for: profile.id), "Alice")
+        XCTAssertEqual(reloaded.profiles.name(for: nil), "Default")
+    }
+
+    func testProfileUpdateRenamesAndRecoloursPersistently() {
+        let created: BrowserProfile
+        do {
+            let store = makeStore()
+            created = store.profiles.create(name: "Alice")
+            var edited = created
+            edited.name = "Alice (staging)"
+            edited.color = .purple
+            store.profiles.update(edited)
+        }
+        let reloaded = makeStore()
+        XCTAssertEqual(reloaded.profiles.profile(for: created.id)?.name, "Alice (staging)")
+        XCTAssertEqual(reloaded.profiles.profile(for: created.id)?.color, .purple)
+    }
+
+    func testCreateAssignsDistinctColors() {
+        let store = makeStore()
+        let a = store.profiles.create(name: "Alice")
+        let b = store.profiles.create(name: "Bob")
+        XCTAssertNotNil(a.color)
+        XCTAssertNotNil(b.color)
+        XCTAssertNotEqual(a.color, b.color)
+    }
+
+    func testNewTabInheritsActiveProfile() {
+        let store = makeStore()
+        let key = select(store)
+        let alice = store.profiles.create(name: "Alice")
+        let first = store.openTab(for: key, url: URL(string: "https://a.test"))
+        store.setProfile(alice.id, for: first.id, in: key)
+
+        // Active tab is Alice's → the new tab stays in Alice's silo.
+        let second = store.openTab(for: key)
+        XCTAssertEqual(second.profileID, alice.id)
+
+        // From the terminal (no active web tab) → default silo.
+        store.setActive(.terminal, for: key)
+        let third = store.openTab(for: key)
+        XCTAssertNil(third.profileID)
+    }
+
+    func testDeleteProfileRemapsTabsAndRecordsAndRemovesData() {
+        let alice: BrowserProfile
+        do {
+            // A second session's record goes cold (session dies) while still
+            // referencing the profile — deletion must scrub it too.
+            let store = makeStore()
+            alice = store.profiles.create(name: "Alice")
+            let cold = select(store, session: "$2", name: "other")
+            store.setProfile(alice.id,
+                             for: store.openTab(for: cold, url: URL(string: "https://c.test")).id,
+                             in: cold)
+            store.sessionDied(hostID: "local", livingSessionIDs: ["$1"])
+        }
+
+        let store = makeStore()
+        let key = select(store)
+        let tab = store.openTab(for: key, url: URL(string: "https://a.test"))
+        store.setProfile(alice.id, for: tab.id, in: key)
+
+        store.deleteProfile(alice.id)
+        XCTAssertNil(tab.profileID)
+        XCTAssertTrue(store.profiles.profiles.isEmpty)
+        XCTAssertEqual(removedData, [alice.id])
+        // Every persisted record — live session and cold one — is scrubbed.
+        for record in persistence.load() {
+            XCTAssertTrue(record.tabs.allSatisfy { $0.profileID == nil })
+        }
+    }
+
+    func testSafariUserAgentPersistsAndRestores() {
+        let url = URL(string: "https://accounts.google.com")!
+        do {
+            let store = makeStore()
+            let key = select(store)
+            let tab = store.openTab(for: key, url: url)
+            store.setSafariUserAgent(true, for: tab.id, in: key)
+        }
+
+        let store = makeStore()
+        let key = select(store, session: "$3", name: "belfry")
+        XCTAssertEqual(store.tabs(for: key).map(\.usesSafariUserAgent), [true])
+    }
+
+    func testTabRecordsWithoutUserAgentFieldStillDecode() throws {
+        // A record written by the pre-profiles build has no UA key.
+        let json = """
+        [{"hostID":"local","sessionName":"belfry",
+          "tabs":[{"url":"https://a.test"}]}]
+        """
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: persistence.fileURL)
+        let store = makeStore()
+        let key = select(store)
+        XCTAssertEqual(store.tabs(for: key).count, 1)
+        XCTAssertEqual(store.tabs(for: key).first?.usesSafariUserAgent, false)
     }
 
     // MARK: Address-bar normalisation

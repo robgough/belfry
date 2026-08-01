@@ -9,6 +9,8 @@ struct SessionTabsRecord: Codable, Equatable {
     struct TabRecord: Codable, Equatable {
         var url: URL?
         var profileID: UUID?
+        /// Optional so records written before the field existed still decode.
+        var usesSafariUserAgent: Bool?
     }
     let hostID: String
     var sessionName: String

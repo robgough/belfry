@@ -12,8 +12,11 @@ final class BrowserTab: Identifiable {
     /// Last committed URL; nil for a fresh tab awaiting its first address.
     /// Also what persistence records, so restored tabs reload where they were.
     var url: URL?
-    /// Reserved for multi-profile support; nil = the default profile.
+    /// Which profile's cookie silo this tab browses in; nil = the default.
     var profileID: UUID?
+    /// Masquerade as Safari (applicationNameForUserAgent). Off by default —
+    /// mainly for Google OAuth, which rejects unrecognised embedded webviews.
+    var usesSafariUserAgent = false
 
     // Chrome state, mirrored from the web view by its coordinator.
     var title = ""
@@ -27,6 +30,14 @@ final class BrowserTab: Identifiable {
         self.id = id
         self.url = url
         self.profileID = profileID
+    }
+
+    /// Changes when the web view must be rebuilt from a fresh configuration
+    /// (profile or user-agent are configuration-time). The detail view uses
+    /// it as the layer's SwiftUI identity, so a change dismantles the old
+    /// representable and `makeNSView` runs again.
+    var configIdentity: String {
+        "\(id)|\(profileID?.uuidString ?? "default")|\(usesSafariUserAgent)"
     }
 
     /// Chip label: page title, else the host it's pointed at, else a placeholder.

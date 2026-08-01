@@ -7,6 +7,15 @@ import WebKit
 /// servers keep their websockets — but web content is hidden with `isHidden`
 /// rather than opacity: hidden is what makes WebKit throttle rendering and
 /// rAF in background tabs while the network stays alive.
+///
+/// The web view sits inside a plain container view rather than being the
+/// representable's view itself: the attached Web Inspector does frame
+/// surgery on the inspected view and inserts its own pane beside it, and
+/// the container gives that surgery a home WebKit fully owns. The inspector
+/// therefore splits the tab's own layer (and hides with it on tab switches)
+/// instead of colliding with SwiftUI layout. Forcing a detached window is
+/// not an option — inspector window ordering throws (and kills the app) on
+/// this WebKit build.
 struct WebTabLayer: NSViewRepresentable {
     let tab: BrowserTab
     let store: BrowserTabStore
@@ -17,19 +26,42 @@ struct WebTabLayer: NSViewRepresentable {
         WebTabCoordinator(tab: tab, store: store, key: key)
     }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
         let isNew = tab.webView == nil
-        let web = tab.webView ?? Self.makeWebView()
+        let web = tab.webView ?? Self.makeWebView(configuration: configuration())
         context.coordinator.attach(to: web)
         if isNew {
             tab.webView = web
             if let url = tab.url { web.load(URLRequest(url: url)) }
         }
-        return web
+        // Config changes rebuild the layer around the same webView object —
+        // re-parent it into the fresh container.
+        web.removeFromSuperview()
+        web.frame = container.bounds
+        web.autoresizingMask = [.width, .height]
+        container.addSubview(web)
+        return container
     }
 
-    func updateNSView(_ web: WKWebView, context: Context) {
-        web.isHidden = !isVisible
+    /// Profile and user-agent are configuration-time; a change to either
+    /// bumps the tab's configIdentity, which recreates this whole layer and
+    /// lands back here with a fresh configuration.
+    private func configuration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = store.profiles.dataStore(for: tab.profileID)
+        if tab.usesSafariUserAgent {
+            configuration.applicationNameForUserAgent = Self.safariApplicationName
+        }
+        return configuration
+    }
+
+    /// Appended to WebKit's stock UA so the result matches Safari's. The
+    /// version may need a bump when a site starts sniffing for newer.
+    static let safariApplicationName = "Version/26.0 Safari/605.1.15"
+
+    func updateNSView(_ container: NSView, context: Context) {
+        container.isHidden = !isVisible
     }
 
     /// One place builds every web view (fresh tabs here, popups in the
@@ -38,6 +70,11 @@ struct WebTabLayer: NSViewRepresentable {
     static func makeWebView(
         configuration: WKWebViewConfiguration = WKWebViewConfiguration()
     ) -> WKWebView {
+        // isInspectable only advertises the page to Safari's Develop menu;
+        // the in-process inspector (the </> button, "Inspect Element" in the
+        // context menu) needs developer extras too. KVC onto a private but
+        // decades-stable WKPreferences key — the standard recipe.
+        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         let web = WKWebView(frame: .zero, configuration: configuration)
         web.isInspectable = true
         web.allowsBackForwardNavigationGestures = true
