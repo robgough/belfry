@@ -2,6 +2,17 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.08.2] — 2026-08-01
+
+### Fixed
+
+- **Browser tabs can open plain `http://` dev servers** (macOS). App
+  Transport Security defaults to HTTPS-only, so a tab pointed at
+  `localhost:3000`, a tailnet host, or anything else on the LAN failed with
+  "the App Transport Security policy requires the use of a secure
+  connection" — which is most of what the feature is for. Belfry now opts
+  out of ATS.
+
 ## [2026.08.1] — 2026-08-01
 
 ### Added

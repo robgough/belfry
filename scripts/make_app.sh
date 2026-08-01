@@ -149,6 +149,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+    <!-- Browser tabs exist to point at dev servers, which are overwhelmingly
+         plain http:// — localhost:3000, a tailnet host, a LAN box. Default ATS
+         blocks every one of them. NSAllowsLocalNetworking isn't enough: it
+         covers .local/link-local/single-label names, not FQDNs like
+         host.tailnet.ts.net. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key><true/>
+    </dict>
     <key>SUFeedURL</key><string>https://belfry.robgough.net/appcast.xml</string>
     <key>SUPublicEDKey</key><string>nKdcgJBzUX/UsPNA71RLRx1CzXBby33QOor7CQ7t9Yg=</string>
 </dict>
