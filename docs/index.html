@@ -241,6 +241,25 @@
     flex-shrink: 0; display: flex; gap: 1rem;
   }
   nav.status .right a { padding: 0; }
+  /* StayUpfront's own green rather than Catppuccin's, because it's their mark. */
+  .promo {
+    --su: #50b584;
+    display: flex; gap: 1rem; align-items: flex-start;
+    margin-top: 3.5rem;
+    border-color: color-mix(in oklab, var(--su) 30%, var(--surface));
+    text-decoration: none; color: inherit;
+    transition: border-color 0.15s ease;
+  }
+  .promo:hover { border-color: color-mix(in oklab, var(--su) 60%, var(--surface)); text-decoration: none; }
+  .promo-mark { flex: 0 0 auto; width: 40px; height: 40px; }
+  .promo-body { min-width: 0; }
+  .promo h3 { color: var(--su); margin-bottom: 0.6rem; }
+  .promo .promo-line { margin-top: 0; font-size: 0.88rem; color: var(--subtext); }
+  .promo-cta {
+    font-family: var(--mono); font-size: 0.82rem; font-weight: 600;
+    color: var(--su); margin-top: 0.8rem;
+  }
+  @media (max-width: 520px) { .promo { flex-direction: column; gap: 0.8rem; } }
 </style>
 <!-- Fathom - beautiful, simple website analytics -->
 <script src="https://cdn.usefathom.com/script.js" data-site="RKUNTXUU" defer></script>
@@ -367,6 +386,21 @@ open BelfryiOS.xcodeproj  <span class="c"># set your team, run</span></pre>
     <p>Each host gets two planes. The <strong>control plane</strong> is a <code>tmux -C</code> client attached to a hidden per-launch session — it feeds the sidebar and issues actions, and never sizes your real sessions. The <strong>data plane</strong> is one terminal surface per visited session running <code>tmux attach</code>.</p>
     <p>Both ride a per-platform transport behind a small seam: macOS forks PTYs and drives the system <code>ssh</code> with connection sharing; iPadOS speaks SSH in-process via SwiftNIO, running tmux as exec channels.</p>
   </section>
+
+  <!-- Deliberately looks like an ad, because it is one. StayUpfront's own
+       favicon.svg, inlined, so the page still fetches nothing extra. -->
+  <a class="card promo" href="https://stayupfront.com">
+    <svg class="promo-mark" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M60 177.895C60 121.068 106.11 75 162.989 75H336.011C392.89 75 439 121.068 439 177.895V309.6C439 366.427 392.89 412.495 336.011 412.495H162.989C106.11 412.495 60 366.427 60 309.6V177.895Z" fill="#50B584"/>
+      <path d="M364.799 322.637C378.531 314.716 395.696 324.617 395.696 340.459V447.39C395.696 463.232 378.531 473.133 364.799 465.212L272.109 411.747C258.377 403.826 258.377 384.024 272.109 376.103L364.799 322.637Z" fill="#50B584"/>
+      <path d="M232.511 270.451L225.92 147.174H269.422L262.831 270.451H232.511ZM247.539 341.308C240.684 341.308 234.972 338.937 230.402 334.196C225.832 329.455 223.547 323.747 223.547 317.074C223.547 310.05 225.832 304.255 230.402 299.689C234.972 294.948 240.684 292.577 247.539 292.577C254.57 292.577 260.282 294.948 264.677 299.689C269.246 304.255 271.531 310.05 271.531 317.074C271.531 323.747 269.246 329.455 264.677 334.196C260.282 338.937 254.57 341.308 247.539 341.308Z" fill="#F2F5F9"/>
+    </svg>
+    <div class="promo-body">
+      <h3>also&nbsp;from&nbsp;me <span>— stayupfront</span></h3>
+      <p class="promo-line">The all-in-one customer support platform for small B2B SaaS teams — one always-current portal for your customers, one workspace for your team.</p>
+      <p class="promo-cta">stayupfront.com&nbsp;&rarr;</p>
+    </div>
+  </a>
 
   <footer>
     <img class="icon" src="images/icon-180.png" alt="" width="44" height="44">
