@@ -150,16 +150,16 @@ extension TerminiLocalPTYWorkspace: TerminalWorkspace {
     }
 }
 
-/// Bridges the shared HooksManaging seam to the macOS ClaudeHooks engine
+/// Bridges the shared HooksManaging seam to the macOS AgentHooks engine
 /// (which shells out over the same transport).
 struct TmuxHooksManager: HooksManaging {
     let transport: TmuxTransport
 
-    func check() -> HooksOutcome { map(ClaudeHooks.check(transport)) }
-    func install() -> HooksOutcome { map(ClaudeHooks.install(transport)) }
-    func remove() -> HooksOutcome { map(ClaudeHooks.remove(transport)) }
+    func check() -> HooksOutcome { map(AgentHooks.check(transport)) }
+    func install() -> HooksOutcome { map(AgentHooks.install(transport)) }
+    func remove() -> HooksOutcome { map(AgentHooks.remove(transport)) }
 
-    private func map(_ outcome: ClaudeHooks.Outcome) -> HooksOutcome {
+    private func map(_ outcome: AgentHooks.Outcome) -> HooksOutcome {
         switch outcome {
         case .status(let installed, let current): return .status(installed: installed, current: current)
         case .failure(let message): return .failure(message)

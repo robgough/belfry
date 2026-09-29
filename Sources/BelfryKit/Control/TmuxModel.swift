@@ -21,48 +21,6 @@ enum ConnectionStatus: Hashable {
     }
 }
 
-/// What Claude Code is doing in a tmux window, surfaced as a sidebar badge.
-/// Resolved from a `@claude_state` tmux window option (set precisely by Claude
-/// Code hooks — see docs/claude-status-hooks.md) when present, otherwise a
-/// best-effort guess from the window's foreground command.
-enum ClaudeState: Hashable {
-    case none        // no Claude here
-    case running     // Claude present, sub-state unknown (no hooks configured)
-    case working     // Claude is busy working (from a hook)
-    case background  // turn ended but background tasks/agents still running; auto-resumes
-    case idle        // Claude finished its turn — nothing pending (from a hook)
-    case waiting     // Claude is actively waiting for your input, e.g. a permission prompt (from a hook)
-
-    /// `command` is the window's active-pane foreground command; `hookState` is
-    /// the `@claude_state` window option ("" when unset).
-    init(command: String, hookState: String) {
-        let cmd = command.lowercased()
-        // If the active pane is plainly a shell, any leftover hook state is stale
-        // (Claude exited) — don't show a badge.
-        let shell = ["zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh"].contains(cmd)
-        switch hookState.lowercased() {
-        case "working", "busy", "thinking":
-            self = shell ? .none : .working
-        case "background", "bg", "agents":
-            self = shell ? .none : .background
-        case "idle", "done", "stop":
-            self = shell ? .none : .idle
-        case "waiting", "attention", "needs-input":
-            self = shell ? .none : .waiting
-        default:
-            // No hook signal: best-effort presence from the command name. ("node"
-            // is deliberately not matched — too ambiguous; configure hooks for
-            // reliable detection.)
-            self = (cmd == "claude" || cmd.hasPrefix("claude")) ? .running : .none
-        }
-    }
-
-    /// Only a genuine waiting-for-input state pulls for attention (drives the
-    /// Dock badge). `.background` deliberately does *not* — Claude will resume
-    /// on its own — and neither does `.idle` (the turn is over; nothing pending).
-    var needsAttention: Bool { self == .waiting }
-}
-
 /// A tmux window within a session. `id` is tmux's stable window id (e.g. "@10").
 struct TmuxWindow: Identifiable, Hashable {
     let id: String
@@ -75,14 +33,26 @@ struct TmuxWindow: Identifiable, Hashable {
     /// viewed. Set by any program (a finished build, a notification, …), not just
     /// Claude. Cleared by tmux when the window is selected (i.e. when you click it).
     var hasBell: Bool = false
-    var claudeState: ClaudeState = .none
-    /// The Claude Code *session name* running here (e.g. "belfry-60"), from the
-    /// `@claude_title` window option the status hooks maintain ("" when unknown).
-    /// Shown on pinned rows so a pinned Claude window says which session it is.
-    var claudeTitle: String = ""
+    /// Coding agents running in this window's panes (see `AgentPane.detect`).
+    var agents: [AgentPane] = []
     /// tmux's `pane_current_path` for the window's active pane ("" when unknown).
     /// Shown on pinned rows, where a window appears outside its host grouping.
     var currentPath: String = ""
+
+    /// The agent that speaks for the window in its badge: the most urgent one,
+    /// preferring the active pane on ties. Per-pane state means two agents in
+    /// one window no longer overwrite each other; the window shows whichever
+    /// needs you most.
+    var primaryAgent: AgentPane? {
+        agents.max { a, b in
+            (a.state.urgency, a.isActivePane ? 1 : 0) < (b.state.urgency, b.isActivePane ? 1 : 0)
+        }
+    }
+
+    var agentState: AgentState { primaryAgent?.state ?? .none }
+
+    /// The primary agent's session name ("" when unknown).
+    var agentName: String { primaryAgent?.name ?? "" }
 }
 
 /// Collapse the common macOS/Linux home prefixes to "~" — we can't know a
@@ -128,6 +98,28 @@ final class TmuxStore {
     private var rawWindows: [String: [TmuxWindow]] = [:]
     private var rebuildScheduled = false
 
+    /// pane id → its agent's state at the last rebuild, to spot turns ending.
+    @ObservationIgnored private var lastAgentStates: [String: AgentState] = [:]
+    /// Panes whose agent finished (busy → idle) while their window wasn't the
+    /// one on screen — the "done, not yet seen" marker. Cleared by viewing the
+    /// window or by the agent getting busy again.
+    @ObservationIgnored private var unseenFinished: Set<String> = []
+
+    /// The window this host is currently showing (nil when the selection is on
+    /// another host). Set by the sidebar; viewing a window marks its agents seen.
+    var viewedWindowID: String? {
+        didSet {
+            guard viewedWindowID != oldValue, let viewedWindowID else { return }
+            let seen = rawWindows.values.joined()
+                .filter { $0.id == viewedWindowID }
+                .flatMap { $0.agents.map(\.id) }
+            if !unseenFinished.isDisjoint(with: seen) {
+                unseenFinished.subtract(seen)
+                scheduleRebuild()
+            }
+        }
+    }
+
     static let internalSessionPrefix = "__belfry"
 
     func applySessionList(_ list: [(id: String, name: String, attached: Int)]) {
@@ -151,6 +143,8 @@ final class TmuxStore {
     func clear() {
         rawSessions.removeAll()
         rawWindows.removeAll()
+        lastAgentStates.removeAll()
+        unseenFinished.removeAll()
         if !sessions.isEmpty { sessions = [] }
     }
 
@@ -172,15 +166,47 @@ final class TmuxStore {
     }
 
     private func rebuild() {
+        trackFinishedAgents()
         var built: [TmuxSession] = []
         for (id, info) in rawSessions {
             guard !info.name.hasPrefix(Self.internalSessionPrefix) else { continue }
-            let windows = (rawWindows[id] ?? []).sorted { $0.index < $1.index }
+            let windows = (rawWindows[id] ?? [])
+                .sorted { $0.index < $1.index }
+                .map { window in
+                    var window = window
+                    window.agents = window.agents.map { agent in
+                        var agent = agent
+                        agent.finishedUnseen = unseenFinished.contains(agent.id)
+                        return agent
+                    }
+                    return window
+                }
             built.append(TmuxSession(id: id, name: info.name, attachedClients: info.attached, windows: windows))
         }
         built.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         // Only publish when something actually changed — a no-op assignment still
         // forces a full List/table reload (and another chance to re-enter).
         if built != sessions { sessions = built }
+    }
+
+    /// Fold the latest agent states into `unseenFinished`: a pane whose agent
+    /// went from busy to idle off-screen is marked; one that's busy (or asking
+    /// for you) again, or gone, is cleared.
+    private func trackFinishedAgents() {
+        var states: [String: AgentState] = [:]
+        for window in rawWindows.values.joined() {
+            for agent in window.agents {
+                states[agent.id] = agent.state
+                if agent.state == .idle {
+                    if lastAgentStates[agent.id]?.isBusy == true, window.id != viewedWindowID {
+                        unseenFinished.insert(agent.id)
+                    }
+                } else {
+                    unseenFinished.remove(agent.id)
+                }
+            }
+        }
+        unseenFinished = unseenFinished.filter { states[$0] != nil }
+        lastAgentStates = states
     }
 }

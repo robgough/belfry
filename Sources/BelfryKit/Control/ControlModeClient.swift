@@ -17,7 +17,7 @@ import Foundation
 ///   when it changes, so the app sleeps unless something actually happened. A
 ///   periodic re-list remains as a backstop — slow once a subscription
 ///   notification proves the server supports push, legacy-fast otherwise.
-/// - Query output is tagged with a literal line prefix (`SESS`/`WIN`) so we can
+/// - Query output is tagged with a literal line prefix (`SESS`/`PANE`) so we can
 ///   parse by line-prefix and skip fragile command↔response correlation.
 final class ControlModeClient {
     private let store: TmuxStore
@@ -96,17 +96,6 @@ final class ControlModeClient {
 
     private static let sessionFormat =
         "SESS #{session_id} #{session_attached} #{session_windows} #{session_name}"
-    // `pane_current_command` (active pane) + `@claude_state` (window option set by
-    // Claude Code hooks) drive the per-window Claude status badge; `@claude_title`
-    // (same hooks) carries the Claude session name; `pane_current_path` gives
-    // pinned rows their working-directory context.
-    // Window fields are TAB-separated (unlike the session line): the path can
-    // contain spaces, so positional space-splitting can't carry both it and the
-    // greedy window name. The hooks strip tabs/newlines from the title before
-    // setting it, so it can't break this positional parse.
-    private static let windowFormat =
-        "WIN\t#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity_flag}\t#{window_bell_flag}\t#{pane_current_command}\t#{@claude_state}\t#{@claude_title}\t#{pane_current_path}\t#{window_name}"
-
     /// Poll cadence before the server has proven push support (old tmux), and
     /// the slow backstop once `%subscription-changed` notifications flow.
     private static let fastRefreshInterval: TimeInterval = 2.0
@@ -118,18 +107,23 @@ final class ControlModeClient {
     private static let connectTimeout: TimeInterval = 12.0
 
     /// Format for the server-side tree subscription: every session (`#{S:}` loop)
-    /// with its windows nested (`#{W:}` loop), covering everything the sidebar
-    /// renders (attach state, active/activity/bell flags, foreground command,
-    /// `@claude_state`, names). The value is never parsed — any change simply
-    /// triggers a re-list — so the separators only need to make changes visible,
-    /// not be unambiguous. NOTE: a literal `,` inside `#{S:}`/`#{W:}` is loop
-    /// syntax (it introduces the current-item alternate format) and silently
-    /// breaks nesting — no commas allowed here.
+    /// with its windows (`#{W:}`) and their panes (`#{P:}`) nested, covering
+    /// everything the sidebar renders (attach state, active/activity/bell flags,
+    /// foreground commands, agent options, names). The value is never parsed —
+    /// any change simply triggers a re-list — so the separators only need to make
+    /// changes visible, not be unambiguous. `pane_title` is deliberately left
+    /// out: Claude Code animates a spinner in it while streaming, which would
+    /// re-list every second; hook writes (every tool call) pick titles up anyway.
+    /// NOTE: a literal `,` inside `#{S:}`/`#{W:}`/`#{P:}` is loop syntax (it
+    /// introduces the current-item alternate format) and silently breaks
+    /// nesting — no commas allowed here.
     private static let treeSubscriptionFormat =
         "#{S:#{session_id}#{session_attached}#{session_name}="
         + "#{W:#{window_id}#{window_index}#{window_active}#{window_activity_flag}"
-        + "#{window_bell_flag}#{pane_current_command}#{@claude_state}#{@claude_title}"
-        + "#{pane_current_path}#{window_name}|}~}"
+        + "#{window_bell_flag}#{@claude_state}#{@claude_title}#{window_name}"
+        + "#{P:#{pane_id}#{pane_active}#{pane_current_command}#{pane_current_path}"
+        + "#{@agent_state}#{@agent_ts}#{@agent_activity}#{@agent_summary}#{@agent_diff}"
+        + "#{@agent_steps}#{@agent_subagents}#{@agent_tasks}#{@agent_mode}#{@agent_branch}#{@agent_context}.}|}~}"
 
     @MainActor
     init(store: TmuxStore, channel: any ControlChannel, controlSessionName: String) {
@@ -233,6 +227,14 @@ final class ControlModeClient {
         send("select-window -t \(windowID)")
     }
 
+    /// Make `paneID` (e.g. "%5") the active pane of its window — used when the
+    /// Agents section jumps to an agent in a split window.
+    @MainActor
+    func selectPane(_ paneID: String) {
+        guard paneID.hasPrefix("%"), paneID.dropFirst().allSatisfy(\.isNumber) else { return }
+        send("select-pane -t \(paneID)")
+    }
+
     // MARK: Server-side actions (drive tmux from the sidebar)
 
     @MainActor func renameSession(id: String, to name: String) {
@@ -298,7 +300,7 @@ final class ControlModeClient {
     @MainActor
     private func refreshNow() {
         send("list-sessions -F '\(Self.sessionFormat)'")
-        send("list-windows -a -F '\(Self.windowFormat)'")
+        send("list-panes -a -F '\(PaneListing.format)'")
     }
 
     /// Coalesce refreshes triggered by a burst of notifications.
@@ -375,7 +377,7 @@ final class ControlModeClient {
     @MainActor
     private func processBlock(_ lines: [String]) {
         // A block is the response to exactly one query, so it carries only one
-        // kind of tagged line (SESS or WIN).
+        // kind of tagged line (SESS or PANE).
         if lines.contains(where: { $0.hasPrefix("SESS ") }) {
             let sessions = lines.compactMap { $0.hasPrefix("SESS ") ? Self.parseSession($0) : nil }
             reapOrphanedControlSessions(sessions)
@@ -388,9 +390,8 @@ final class ControlModeClient {
             onLivingSessions?(Set(sessions.map(\.id)))
             ensureDefaultSessionIfEmpty(sessions)
         }
-        if lines.contains(where: { $0.hasPrefix("WIN\t") }) {
-            let windows = lines.compactMap { $0.hasPrefix("WIN\t") ? Self.parseWindow($0) : nil }
-            store.applyWindowList(windows)
+        if lines.contains(where: { $0.hasPrefix("PANE\t") }) {
+            store.applyWindowList(PaneListing.windows(fromLines: lines))
         }
     }
 
@@ -462,25 +463,6 @@ final class ControlModeClient {
         let attached = Int(parts[2]) ?? 0
         let name = String(parts[4])
         return (id, name, attached)
-    }
-
-    private static func parseWindow(_ line: String) -> TmuxWindow? {
-        // WIN <sid> <wid> <index> <active> <activity> <bell> <command> <claude_state> <claude_title> <path> <name...>
-        // TAB-separated (see `windowFormat`): the path can contain spaces.
-        let parts = line.split(separator: "\t", maxSplits: 11, omittingEmptySubsequences: false)
-        guard parts.count >= 12 else { return nil }
-        return TmuxWindow(
-            id: String(parts[2]),
-            sessionID: String(parts[1]),
-            index: Int(parts[3]) ?? 0,
-            name: String(parts[11]),
-            isActive: parts[4] == "1",
-            hasActivity: parts[5] == "1",
-            hasBell: parts[6] == "1",
-            claudeState: ClaudeState(command: String(parts[7]), hookState: String(parts[8])),
-            claudeTitle: String(parts[9]),
-            currentPath: String(parts[10])
-        )
     }
 
     @MainActor

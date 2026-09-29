@@ -146,7 +146,7 @@ enum RemoteTmux {
     }
 }
 
-/// Outcome of a Claude-hooks management operation (mirrors ClaudeHooks.Outcome,
+/// Outcome of an agent-hooks management operation (mirrors AgentHooks.Outcome,
 /// which is macOS-only). `current` is false when hooks are installed but were
 /// written by an older Belfry (stale commands) — the owner should reinstall.
 enum HooksOutcome {
@@ -154,7 +154,7 @@ enum HooksOutcome {
     case failure(String)
 }
 
-/// Manages the Claude status hooks on a host. Blocking calls — run off-main.
+/// Manages the agent status hooks on a host. Blocking calls — run off-main.
 /// nil `hooksManager` on a transport hides the hooks UI entirely (iOS, for now).
 protocol HooksManaging: Sendable {
     func check() -> HooksOutcome

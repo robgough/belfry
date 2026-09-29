@@ -1,6 +1,6 @@
 import Foundation
 
-/// State of the Claude Code status hooks on a host (see ClaudeHooks).
+/// State of the agent status hooks on a host (see AgentHooks).
 enum HookStatus: Equatable {
     case unknown
     case checking
@@ -54,7 +54,7 @@ final class HostModel: Identifiable {
     private var lastFailureReason: String?
     private let maxColdAttempts = 4
 
-    /// Whether Belfry's Claude-status hooks are installed on this host.
+    /// Whether Belfry's agent-status hooks are installed on this host.
     private(set) var hooksStatus: HookStatus = .unknown
     private var didCheckHooks = false
 
@@ -81,7 +81,7 @@ final class HostModel: Identifiable {
     /// The local host is always meant to be connected and offers no disconnect.
     var canDisconnect: Bool { !transport.isLocal }
 
-    /// Whether this host supports Claude-hooks management (macOS transports do).
+    /// Whether this host supports agent-hooks management (macOS transports do).
     var supportsHooksManagement: Bool { transport.hooksManager != nil }
 
     // MARK: Lifecycle
@@ -300,7 +300,7 @@ final class HostModel: Identifiable {
         rebuildClientAndStart(ensureSession: false, forceServerCreate: false)
     }
 
-    // MARK: Claude status hooks
+    // MARK: Agent status hooks
 
     /// Check once automatically after the first successful connect.
     private func checkHooksIfNeeded() {

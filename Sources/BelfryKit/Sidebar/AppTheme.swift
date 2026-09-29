@@ -17,11 +17,12 @@ enum AppTheme {
     }
     static var accent: Color { color(resolved.palette[safe: 4] ?? resolved.foreground) }
 
-    /// Status colours from the terminal palette (ANSI green/yellow), so every
-    /// "connected"/"attention" indicator in the chrome shares one green and one
-    /// amber with the terminals instead of mixing system colours.
+    /// Status colours from the terminal palette (ANSI green/yellow/red), so
+    /// every "connected"/"attention"/"error" indicator in the chrome shares one
+    /// green, amber and red with the terminals instead of mixing system colours.
     static var statusGood: Color { color(resolved.palette[safe: 2] ?? 0x40A02B) }
     static var statusWarn: Color { color(resolved.palette[safe: 3] ?? 0xDF8E1D) }
+    static var statusBad: Color { color(resolved.palette[safe: 1] ?? 0xD20F39) }
 
     /// Machine-name tints from the terminal palette (ANSI cyan/magenta):
     /// wherever the chrome names a host, the colour says where it is — cyan

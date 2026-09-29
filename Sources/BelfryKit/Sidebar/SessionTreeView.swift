@@ -27,7 +27,8 @@ private struct InlineLinkButton: View {
 }
 
 /// Left sidebar: a Host → Session → Window tree, topped by a Pinned section
-/// when anything is pinned. Each host is a collapsible section; sessions list
+/// when anything is pinned and an Agents section when coding agents are
+/// running. Each host is a collapsible section; sessions list
 /// their windows beneath. Window rows are the selectable leaves (tagged with
 /// their host + window id). Right-click rows for actions; text-entry actions
 /// raise a `SidebarPrompt`, destructive ones a `ConfirmAction`. Hovering a row
@@ -46,6 +47,8 @@ struct SessionTreeView: View {
     @State private var lastSelectedSession: SessionRef?
     /// The pin currently being dragged to a new spot (macOS custom reorder).
     @State private var draggedPinID: String?
+    /// Whether the Agents section is expanded (remembered across launches).
+    @AppStorage("agentsSectionExpanded") private var agentsExpanded = true
 
     private struct SessionRef: Equatable {
         let hostID: String
@@ -82,6 +85,11 @@ struct SessionTreeView: View {
             selection = target
         }
         .onChange(of: selection, initial: true) { _, sel in
+            // Tell each host which of its windows is on screen: viewing a
+            // window marks its finished agents seen (see TmuxStore).
+            for host in hosts {
+                host.store.viewedWindowID = sel?.hostID == host.id ? sel?.windowID : nil
+            }
             guard let sel,
                   let host = hosts.first(where: { $0.id == sel.hostID }),
                   let session = host.store.sessions.first(where: { $0.windows.contains { $0.id == sel.windowID } })
@@ -130,6 +138,17 @@ struct SessionTreeView: View {
                     .modifier(SidebarHeaderChrome())
             }
         }
+        let agents = AgentEntry.collect(from: hosts)
+        if !agents.isEmpty {
+            Section(isExpanded: $agentsExpanded) {
+                ForEach(agents) { entry in
+                    agentRow(for: entry)
+                }
+            } header: {
+                AgentsSectionHeader(entries: agents, isExpanded: $agentsExpanded)
+                    .modifier(SidebarHeaderChrome())
+            }
+        }
         ForEach(hosts) { host in
             Section(isExpanded: expansionBinding(for: host)) {
                 HostBody(host: host, model: model,
@@ -140,6 +159,29 @@ struct SessionTreeView: View {
                     .modifier(SidebarHeaderChrome())
             }
         }
+    }
+
+    // MARK: Agents section
+
+    /// A row in the Agents section. Selecting it shows the agent's window and,
+    /// on macOS, focuses the agent's own pane within it (iOS rows select via
+    /// native List selection, which only carries the window).
+    @ViewBuilder private func agentRow(for entry: AgentEntry) -> some View {
+        let target = entry.selection
+        AgentRow(entry: entry)
+            .modifier(WindowSelectionTag(target: target))
+            .modifier(SelectOnTap {
+                selection = target
+                entry.host.client.selectPane(entry.agent.id)
+            })
+            .contextMenu {
+                Button("Show \(entry.agent.kind.displayName)") {
+                    selection = target
+                    entry.host.client.selectPane(entry.agent.id)
+                }
+            }
+            .listRowBackground(sidebarRowBackground(selected: selection == target))
+            .modifier(SidebarRowChrome())
     }
 
     // MARK: Pinned section
@@ -261,7 +303,7 @@ struct SessionTreeView: View {
 /// background changes only the visuals, not List-selection mechanics, so
 /// iPhone detail navigation keeps working. Shared by the host tree and the
 /// Pinned section.
-@ViewBuilder private func sidebarRowBackground(selected: Bool) -> some View {
+@ViewBuilder func sidebarRowBackground(selected: Bool) -> some View {
     if selected {
         RoundedRectangle(cornerRadius: 5, style: .continuous)
             .fill(AppTheme.accent.opacity(0.15))
@@ -277,7 +319,7 @@ struct SessionTreeView: View {
 /// iOS row chrome: kill the grouped-list separators and the tall default row
 /// metrics so the tree reads as one dense sidebar (like the Mac) instead of a
 /// stack of boxed table cells. macOS's AppKit sidebar style needs none of it.
-private struct SidebarRowChrome: ViewModifier {
+struct SidebarRowChrome: ViewModifier {
     /// Shared leading inset for iOS rows and section headers, so both line up.
     /// With the plain list style there's no section margin, so this is the
     /// tree's actual distance from the edge (a little inside the nav title).
@@ -300,7 +342,7 @@ private struct SidebarRowChrome: ViewModifier {
 /// iOS section-header chrome: match the rows' leading inset (SidebarRowChrome)
 /// so headers line up with their content instead of keeping the sidebar style's
 /// wider default header inset. macOS's AppKit sidebar handles headers itself.
-private struct SidebarHeaderChrome: ViewModifier {
+struct SidebarHeaderChrome: ViewModifier {
     func body(content: Content) -> some View {
         #if os(iOS)
         content
@@ -319,7 +361,7 @@ private struct SidebarHeaderChrome: ViewModifier {
 /// Simultaneous (not `.onTapGesture`) because an exclusive tap gesture eats
 /// the mouse-down that starts a `.onMove` row drag (FB7367473), which would
 /// make the Pinned section un-reorderable.
-private struct SelectOnTap: ViewModifier {
+struct SelectOnTap: ViewModifier {
     let action: () -> Void
     init(_ action: @escaping () -> Void) { self.action = action }
     func body(content: Content) -> some View {
@@ -338,7 +380,7 @@ private struct SelectOnTap: ViewModifier {
 /// directly yields an `Optional<WindowSelection>` tag that silently never
 /// matches — which left iOS pinned rows unselectable (tap did nothing). Unwrap
 /// here and leave non-live pins untagged.
-private struct WindowSelectionTag: ViewModifier {
+struct WindowSelectionTag: ViewModifier {
     let target: WindowSelection?
     func body(content: Content) -> some View {
         if let target {
@@ -553,7 +595,7 @@ private struct HostHeader: View {
     @ViewBuilder private var menu: some View {
         Button("New Session…") { prompt = .newSession(host: host) }
         Divider()
-        claudeHooksItems
+        agentHooksItems
         if host.canDisconnect {
             Divider()
             switch host.store.status {
@@ -571,35 +613,36 @@ private struct HostHeader: View {
         }
     }
 
-    /// Claude-status-hook state + install action for this host.
-    @ViewBuilder private var claudeHooksItems: some View {
+    /// Agent-status-hook state + install action for this host (Claude Code,
+    /// Codex, OpenCode, pi, omp — whichever are installed there).
+    @ViewBuilder private var agentHooksItems: some View {
         // Transports without a hooks manager (iOS, for now) hide this entirely.
         if !host.supportsHooksManagement {
             EmptyView()
         // Managing remote hooks needs the SSH link; local always works.
         } else if !(host.transport.isLocal || host.store.status.isLive) {
-            Button("Claude status hooks (connect to manage)") {}.disabled(true)
+            Button("Agent status hooks (connect to manage)") {}.disabled(true)
         } else {
             switch host.hooksStatus {
             case .installed:
-                Button { } label: { Label("Claude status hooks installed", systemImage: "checkmark.circle") }
+                Button { } label: { Label("Agent status hooks installed", systemImage: "checkmark.circle") }
                     .disabled(true)
-                Button("Reinstall Claude Status Hooks") { host.installHooks() }
-                Button("Remove Claude Status Hooks", role: .destructive) { host.removeHooks() }
+                Button("Reinstall Agent Status Hooks") { host.installHooks() }
+                Button("Remove Agent Status Hooks", role: .destructive) { host.removeHooks() }
             case .notInstalled:
-                Button("Install Claude Status Hooks…") { host.installHooks() }
+                Button("Install Agent Status Hooks…") { host.installHooks() }
             case .checking:
-                Button("Checking Claude hooks…") {}.disabled(true)
+                Button("Checking agent hooks…") {}.disabled(true)
             case .installing:
-                Button("Installing Claude hooks…") {}.disabled(true)
+                Button("Installing agent hooks…") {}.disabled(true)
             case .removing:
-                Button("Removing Claude hooks…") {}.disabled(true)
+                Button("Removing agent hooks…") {}.disabled(true)
             case .error(let message):
                 Button { } label: { Label(message, systemImage: "exclamationmark.triangle") }
                     .disabled(true)
-                Button("Re-check Claude Hooks") { host.checkHooks() }
+                Button("Re-check Agent Hooks") { host.checkHooks() }
             case .unknown:
-                Button("Check for Claude Status Hooks") { host.checkHooks() }
+                Button("Check for Agent Status Hooks") { host.checkHooks() }
             }
         }
     }
@@ -749,7 +792,7 @@ private struct PinnedSectionHeader: View {
 
 /// A row in the Pinned section. It appears outside its host grouping, so it
 /// carries its own context: machine name and session (for window pins), the
-/// Claude Code session name when Claude is running there, and the active
+/// agent's session name when a coding agent is running there, and the active
 /// pane's working directory on its own line. Pins are the working set, so the
 /// row runs slightly larger than the tree's. Unresolved pins stay in place
 /// dimmed — unpin them here, or leave them to re-resolve when the target
@@ -790,12 +833,12 @@ private struct PinnedRow: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                 }
-                if let claudeTitle {
-                    Text(claudeTitle)
+                if let agentTitle {
+                    Text(agentTitle)
                         .lineLimit(1)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
-                        .hoverHint("Claude Code session “\(claudeTitle)”")
+                        .hoverHint(agentTitleHint)
                 }
                 contextText
                     .font(.system(size: 10.5))
@@ -815,7 +858,7 @@ private struct PinnedRow: View {
             // slot keeps the status badges full-time. Key off `contextWindow`,
             // not `resolved.window`: session pins have no window of their own,
             // so `resolved.window` is nil and their badge silently vanished —
-            // even though the Claude *title* line above (also `contextWindow`)
+            // even though the agent *title* line above (also `contextWindow`)
             // still showed. Now both track the session's active window together.
             // .fixedSize stops the greedy multi-line text column from
             // compressing the icon-only badge off the row's trailing edge.
@@ -869,14 +912,19 @@ private struct PinnedRow: View {
         return abbreviateHomePath(path)
     }
 
-    /// The Claude Code session name running in the pinned window (session pins
-    /// report their context window's), from the `@claude_title` option the
-    /// status hooks maintain. Suppressed whenever the status badge would be —
-    /// a leftover title with no Claude in the window is stale.
-    private var claudeTitle: String? {
-        guard let window = contextWindow, window.claudeState != .none,
-              !window.claudeTitle.isEmpty else { return nil }
-        return window.claudeTitle
+    /// The agent session name running in the pinned window (session pins
+    /// report their context window's) — e.g. Claude Code's "belfry-a2" — or,
+    /// failing that, its task summary. Nil when no agent is running there.
+    private var agentTitle: String? {
+        guard let agent = contextWindow?.primaryAgent else { return nil }
+        if !agent.name.isEmpty { return agent.name }
+        return agent.summary.isEmpty ? nil : agent.summary
+    }
+
+    private var agentTitleHint: String {
+        guard let agent = contextWindow?.primaryAgent else { return "" }
+        return agent.name.isEmpty ? "\(agent.kind.displayName): \(agent.summary)"
+                                  : "\(agent.kind.displayName) session “\(agent.name)”"
     }
 
     private var staleNote: String? {
@@ -1077,7 +1125,7 @@ private struct WindowRow: View {
 }
 
 /// Status badges shared by tree window rows and pinned window rows: the bell,
-/// the Claude state chip, or the unseen-activity dot.
+/// the agent state chip, or the unseen-activity dot.
 private struct WindowBadges: View {
     let window: TmuxWindow
     var body: some View {
@@ -1088,8 +1136,9 @@ private struct WindowBadges: View {
                     .foregroundStyle(AppTheme.statusWarn)
                     .hoverHint("Bell rang in this window")
             }
-            if window.claudeState != .none {
-                ClaudeBadge(state: window.claudeState, title: window.claudeTitle)
+            if let agent = window.primaryAgent {
+                AgentBadge(state: agent.state, kind: agent.kind, title: agent.name,
+                           unseen: agent.finishedUnseen)
             } else if window.hasActivity {
                 Circle().fill(AppTheme.statusWarn).frame(width: 5, height: 5)
                     .hoverHint("Unseen activity")
@@ -1099,7 +1148,7 @@ private struct WindowBadges: View {
 }
 
 /// The tmux window index in a small chip — active window gets an accent-tinted
-/// fill (same treatment as the host chip and Claude badges), inactive ones a
+/// fill (same treatment as the host chip and agent badges), inactive ones a
 /// plain secondary numeral. Doubles as the "which window is prefix-N" hint.
 private struct WindowIndexChip: View {
     let index: Int
@@ -1123,42 +1172,47 @@ private let brailleFullCell = "⣿"
 /// The spinner: a hole orbiting the full 4-row cell clockwise.
 private let brailleSpinnerFrames = ["⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽", "⣾"]
 
-/// Per-window Claude Code status glyph. A single braille visual language, keyed
-/// by colour and motion: `.working` an accent spinner (hole orbiting the cell);
-/// `.background` the same spinner in purple (Claude's turn ended but background
-/// tasks/agents are still running); `.idle` a still green cell — nothing pending;
-/// `.waiting` a pulsing orange cell — Claude is actively waiting for your input
-/// (e.g. a permission prompt), the state that also badges the Dock; `.running` a
-/// still grey cell (status hooks not installed, so live state is unknown).
+/// Agent status glyph (Claude Code, Codex, OpenCode, pi…). A single braille
+/// visual language, keyed by colour and motion: `.working` an accent spinner
+/// (hole orbiting the cell); `.background` the same spinner in purple (the turn
+/// ended but background tasks/agents are still running); `.idle` a still green
+/// cell — nothing pending; `.waiting` a pulsing orange cell — the agent is
+/// actively waiting for your input (e.g. a permission prompt), the state that
+/// also badges the Dock; `.error` a still red cell — the turn ended on an error;
+/// `.running` a still grey cell (no hooks reporting, so live state is unknown).
 ///
 /// Icon-only, no capsule or word: the glyph stands on its own everywhere — the
-/// sidebar rows and the toolbar's now-playing readout (`NowPlayingView`) alike.
-///
-/// Internal (not file-private) so `NowPlayingView` can reuse it.
-struct ClaudeBadge: View {
-    let state: ClaudeState
-    /// Claude Code session name (from `@claude_title`), appended to the
-    /// tooltip when known; "" hides it.
+/// sidebar rows, the Agents section and the toolbar's now-playing readout.
+struct AgentBadge: View {
+    let state: AgentState
+    var kind: AgentKind = .claude
+    /// The agent's session name, appended to the tooltip when known; "" hides it.
     var title: String = ""
+    /// Finished while you weren't looking (see `AgentPane.finishedUnseen`).
+    var unseen = false
     private let glyphPointSize: CGFloat = 14
     var body: some View {
+        let name = kind.displayName
         switch state {
         case .none:
             EmptyView()
         case .running:
             cell(.secondary, glyphs: [brailleFullCell],
-                 tip: "Claude is running here — install status hooks for live Working / Idle / Waiting status")
+                 tip: "\(name) is running here — install agent status hooks for live Working / Idle / Waiting status")
         case .working:
-            cell(.accentColor, glyphs: brailleSpinnerFrames, tip: "Claude is working")
+            cell(.accentColor, glyphs: brailleSpinnerFrames, tip: "\(name) is working")
         case .background:
             cell(.purple, glyphs: brailleSpinnerFrames,
-                 tip: "Claude's turn ended, but background tasks or agents are still running — it will resume on its own")
+                 tip: "\(name)'s turn ended, but background tasks or agents are still running — it will resume on its own")
         case .idle:
             cell(AppTheme.statusGood, glyphs: [brailleFullCell],
-                 tip: "Claude finished its turn — nothing pending")
+                 tip: unseen ? "\(name) finished — you haven't looked yet" : "\(name) finished its turn — nothing pending")
         case .waiting:
             cell(.orange, glyphs: [brailleFullCell], pulses: true,
-                 tip: "Claude is waiting for your input")
+                 tip: "\(name) is waiting for your input")
+        case .error:
+            cell(AppTheme.statusBad, glyphs: [brailleFullCell],
+                 tip: "\(name)'s turn ended on an error")
         }
     }
 

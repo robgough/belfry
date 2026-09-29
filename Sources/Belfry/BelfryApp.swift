@@ -311,8 +311,9 @@ struct RootView: View {
                         .truncationMode(.middle)
                 }
             }
-            if let readout, readout.claudeState != .none {
-                ClaudeBadge(state: readout.claudeState, title: readout.claudeTitle)
+            if let agent = readout?.agent {
+                AgentBadge(state: agent.state, kind: agent.kind, title: agent.name,
+                           unseen: agent.unseen)
             }
         }
         .padding(.horizontal, 12)
@@ -378,14 +379,15 @@ struct RootView: View {
     private func switcherLabel(session: TmuxSession, window: TmuxWindow) -> String {
         let name = window.name.isEmpty ? "window \(window.index)" : window.name
         var label = name == session.name ? name : "\(session.name) · \(name)"
-        // Live Claude state as a plain word — menu items can't carry the
+        // Live agent state as a plain word — menu items can't carry the
         // coloured braille chip.
-        switch window.claudeState {
+        switch window.agentState {
         case .none, .running: break
         case .working:    label += " — working"
         case .background: label += " — background"
         case .idle:       label += " — idle"
         case .waiting:    label += " — waiting"
+        case .error:      label += " — error"
         }
         return label
     }

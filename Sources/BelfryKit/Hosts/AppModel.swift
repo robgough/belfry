@@ -91,12 +91,15 @@ final class AppModel {
     /// user decision — drives the "server not responding" prompt.
     var stuckHost: HostModel? { hosts.first { $0.serverStuck } }
 
-    /// Number of windows across all hosts where Claude is waiting for you — drives
-    /// the Dock badge so you notice while Belfry is in the background.
+    /// Number of agents across all hosts that are waiting for you (or stopped on
+    /// an error) — drives the Dock badge so you notice while Belfry is in the
+    /// background.
     var attentionCount: Int {
         hosts.reduce(0) { total, host in
             total + host.store.sessions.reduce(0) { sum, session in
-                sum + session.windows.filter { $0.claudeState.needsAttention }.count
+                sum + session.windows.reduce(0) { count, window in
+                    count + window.agents.filter { $0.state.needsAttention }.count
+                }
             }
         }
     }

@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The display-ready description of the selected window: what's running (the
-/// Claude Code session name when the window hosts Claude and the hooks
-/// reported one, otherwise the session/window name) and where it's running
+/// coding agent's session name when the window hosts one that reported it
+/// — e.g. Claude Code's — otherwise the session/window name) and where it's running
 /// (host · working directory, ~-abbreviated). One value shared by every
 /// header readout — the iPhone/iPad's now-playing lozenge and the Mac's
 /// native window title/subtitle — so the two stay word-for-word identical.
@@ -11,7 +11,7 @@ import SwiftUI
 /// joined against live tmux state (host removed, store cleared on disconnect,
 /// window killed, …); callers fall back to their plain app-title state.
 struct WindowReadout: Equatable {
-    /// What's running: the Claude Code session name, or the window's name
+    /// What's running: the agent's session name, or the window's name
     /// (with its session for context when the two differ).
     let primary: String
     /// Where it's running: "host · ~/path" (just the host while the working
@@ -24,8 +24,17 @@ struct WindowReadout: Equatable {
     /// Untruncated details for tooltips (long paths middle-truncate in the
     /// compact displays).
     let hint: String
-    let claudeState: ClaudeState
-    let claudeTitle: String
+    /// The window's primary coding agent's badge inputs (see
+    /// `TmuxWindow.primaryAgent`) — just what the readout shows, so it doesn't
+    /// churn on every tool call's activity text.
+    let agent: Badge?
+
+    struct Badge: Equatable {
+        let state: AgentState
+        let kind: AgentKind
+        let name: String
+        let unseen: Bool
+    }
     /// Absolute working directory of the active pane ("" when unknown).
     let currentPath: String
     /// Whether the window lives on the local host — only then can the Mac
@@ -40,8 +49,8 @@ struct WindowReadout: Equatable {
               let window = session.windows.first(where: { $0.id == sel.windowID })
         else { return nil }
 
-        if window.claudeState != .none, !window.claudeTitle.isEmpty {
-            primary = window.claudeTitle
+        if let agent = window.primaryAgent, !agent.name.isEmpty {
+            primary = agent.name
         } else {
             let windowName = window.name.isEmpty ? "window \(window.index)" : window.name
             primary = windowName == session.name
@@ -59,8 +68,9 @@ struct WindowReadout: Equatable {
         }
         hint = lines.joined(separator: "\n")
 
-        claudeState = window.claudeState
-        claudeTitle = window.claudeTitle
+        agent = window.primaryAgent.map {
+            Badge(state: $0.state, kind: $0.kind, name: $0.name, unseen: $0.finishedUnseen)
+        }
         currentPath = window.currentPath
         isLocalHost = host.transport.isLocal
     }
@@ -112,8 +122,9 @@ struct NowPlayingView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if readout.claudeState != .none {
-                ClaudeBadge(state: readout.claudeState, title: readout.claudeTitle)
+            if let agent = readout.agent {
+                AgentBadge(state: agent.state, kind: agent.kind, title: agent.name,
+                           unseen: agent.unseen)
             }
         }
         .padding(.horizontal, prominent ? 16 : 12)
