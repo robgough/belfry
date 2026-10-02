@@ -122,3 +122,42 @@ struct AgentHooksMergeTests {
         #expect(AgentHooks.merged(into: "{\"hooks\": []}", target: AgentHooks.claude) == nil)
     }
 }
+
+struct WindowTitleTests {
+    private func window(name: String, command: String, path: String = "/Users/rob/code/belfry") -> TmuxWindow {
+        var w = TmuxWindow(id: "@1", sessionID: "$1", index: 2, name: name, isActive: true, hasActivity: false)
+        w.command = command
+        w.currentPath = path
+        return w
+    }
+
+    @Test func automaticShellNamesBecomeTheFolder() {
+        #expect(window(name: "zsh", command: "zsh").title == "belfry")
+        #expect(window(name: "zsh", command: "zsh", path: "/Users/rob").title == "~")
+        #expect(window(name: "zsh", command: "zsh").titleDetail == "")
+        #expect(window(name: "zsh", command: "zsh").symbol == "terminal")
+    }
+
+    @Test func programsKeepTheirNameWithTheFolderBeside() {
+        let vim = window(name: "nvim", command: "nvim")
+        #expect(vim.title == "nvim")
+        #expect(vim.titleDetail == "belfry")
+        #expect(vim.symbol == "square.and.pencil")
+        #expect(window(name: "cargo", command: "cargo").symbol == "hammer")
+    }
+
+    @Test func userChosenNamesWin() {
+        #expect(window(name: "api server", command: "node").title == "api server")
+    }
+
+    @Test func agentsShowTheirTask() throws {
+        var w = window(name: "2.1.284", command: "2.1.284")
+        let raw = AgentPane.Raw(paneID: "%1", windowID: "@1", sessionID: "$1", isActivePane: true,
+                                command: "2.1.284", currentPath: "/x", title: "✳ Fix the login flow",
+                                kind: "", state: "", timestamp: "", activity: "", summary: "",
+                                name: "", diff: "", legacyClaudeState: "", legacyClaudeTitle: "")
+        w.agents = [try #require(AgentPane.detect(raw))]
+        #expect(w.title == "Fix the login flow")
+        #expect(w.symbol == "sparkle")
+    }
+}

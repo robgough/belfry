@@ -18,28 +18,25 @@ When any agent is waiting for you (or stopped on an error), Belfry also shows a 
 on its Dock icon. Working, background and idle agents deliberately don't badge the
 Dock — nothing is blocked on you there.
 
-## The Agents section
+## The Agents section and the Agents window
 
-Sits below **Pinned** and above your hosts, whenever at least one agent is running.
-Each row shows:
+**In the sidebar**, the **Agents** section sits below
+**Pinned** and above your hosts whenever at least one agent is running — agents that
+need you first, then ones that finished while you weren't looking, then working, then
+quiet ones. Each row is two lines: the task (Claude Code's own summary of it, or your
+latest prompt), then one live line — what it's doing right now in plain words
+(`Run the test suite`, `Editing SessionTreeView.swift`; approvals show the real command
+in orange, `Approve Bash: git push`), or for a quiet agent where it lives
+(`belfry ⎇ main · belfry`). Uncommitted `+84 −12` and time in state sit on the right.
+An agent that just moved up or into a more urgent group glows briefly. ⌘1–⌘9 jump to
+the agents in order; clicking one shows its window and focuses its pane.
 
-- **What it's working on** — Claude Code's own task summary (it titles the terminal
-  with one), or the start of your latest prompt.
-- **Which agent, and where** — e.g. `Claude · belfry-a2 · Local · belfry:2`.
-- **What it's doing right now**, in words — `Run the test suite` (Claude's own
-  description of the command), `Editing SessionTreeView.swift`, `Delegating: Audit the
-  parser`; approvals show the real command, `Approve Bash: git push` (orange).
-- **Claude Code's status-line facts** — permission mode (`▸▸ auto`), context in use
-  (`88k context`), sub-agents and tool steps this turn — and each running sub-agent on
-  its own line (`○ general-purpose  Verifying final release build state`).
-- **How much it has changed** — `+84 −12`: uncommitted insertions/deletions in its
-  working tree (untracked files included), refreshed after edits and at each turn end.
-- **How long** it has been in its current state.
-
-Rows needing you sort to the top, then agents that **finished while you weren't
-looking** (bold, "Finished"; cleared when you open the window), then working,
-background and idle ones. Click a row to jump to its window — and, on the Mac, to the
-agent's own pane in a split.
+**The Agents window** (⇧⌘A, or the toolbar's list button) shows every agent on every
+host at once in a sortable table, Activity Monitor style: status, task, agent and
+session name, folder and branch, host and tmux location, what it's doing now,
+sub-agents (hover for their descriptions), permission mode, context in use, tool steps
+this turn, uncommitted changes and time in state. Double-click a row to jump the main
+window to it.
 
 ## Setting it up
 

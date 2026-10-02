@@ -307,6 +307,7 @@ enum PaneListing {
             }
             if paneActive || byID[windowID]?.currentPath.isEmpty == true {
                 byID[windowID]?.currentPath = f[10]
+                byID[windowID]?.command = f[9]
             }
             let raw = AgentPane.Raw(
                 paneID: f[7], windowID: windowID, sessionID: f[1], isActivePane: paneActive,

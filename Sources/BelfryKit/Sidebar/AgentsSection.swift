@@ -9,7 +9,7 @@ struct AgentEntry: Identifiable {
 
     /// Pane ids are only unique per tmux server, so qualify with the host.
     var id: String { "\(host.id)|\(agent.id)" }
-    var selection: WindowSelection { WindowSelection(hostID: host.id, windowID: window.id) }
+    var selection: WindowSelection { WindowSelection(hostID: host.id, windowID: window.id, paneID: agent.id) }
 
     /// Every agent on every connected host, most in need of you first: waiting
     /// or errored, then finished-but-unseen, working, background, idle, and
@@ -47,36 +47,167 @@ struct AgentEntry: Identifiable {
     }
 }
 
-/// Header band for the Agents section — the Pinned header's treatment, plus a
+/// The Agents section's lanes: agents grouped by what they need from you, in
+/// the same order the list sorts by. Agents glide between lanes as their state
+/// changes (see `SessionTreeView`'s list animation).
+enum AgentLane: String, CaseIterable, Identifiable {
+    case needsYou, finished, working, quiet
+
+    var id: String { rawValue }
+
+    static func of(_ agent: AgentPane) -> AgentLane {
+        switch agent.state {
+        case .waiting, .error: .needsYou
+        case .idle where agent.finishedUnseen: .finished
+        case .working, .background: .working
+        case .idle, .running, .none: .quiet
+        }
+    }
+
+    /// Title Case, for native section headers.
+    var nativeTitle: String {
+        switch self {
+        case .needsYou: "Needs You"
+        case .finished: "Just Finished"
+        case .working: "Working"
+        case .quiet: "Quiet"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .needsYou: "Needs you"
+        case .finished: "Just finished"
+        case .working: "Working"
+        case .quiet: "Quiet"
+        }
+    }
+
+    /// The lane panel's wash and hairline; the Quiet lane stays neutral, so
+    /// colour in the sidebar only ever means "look here".
+    var panelTint: Color? { self == .quiet ? nil : tint }
+
+    var tint: Color {
+        switch self {
+        case .needsYou: .orange
+        case .finished: AppTheme.statusGood
+        case .working: AppTheme.accent
+        case .quiet: .secondary
+        }
+    }
+}
+
+/// One row of the lanes list: a lane's header, or one of its agents. Lanes
+/// with no agents are left out entirely.
+enum AgentLaneItem: Identifiable {
+    case header(AgentLane, count: Int)
+    case agent(AgentEntry, AgentLane, isLast: Bool)
+
+    var id: String {
+        switch self {
+        case .header(let lane, _): "lane-\(lane.rawValue)"
+        case .agent(let entry, _, _): entry.id
+        }
+    }
+
+    /// `entries` arrive sorted by `AgentEntry.collect` — lane order, most
+    /// recently changed first within each — so grouping keeps that order.
+    static func build(_ entries: [AgentEntry]) -> [AgentLaneItem] {
+        var items: [AgentLaneItem] = []
+        for lane in AgentLane.allCases {
+            let members = entries.filter { AgentLane.of($0.agent) == lane }
+            guard !members.isEmpty else { continue }
+            items.append(.header(lane, count: members.count))
+            for (index, entry) in members.enumerated() {
+                items.append(.agent(entry, lane, isLast: index == members.count - 1))
+            }
+        }
+        return items
+    }
+}
+
+/// A lane's header row: its name in the lane's tint, and how many it holds.
+struct AgentLaneHeader: View {
+    let lane: AgentLane
+    let count: Int
+    /// Space above the lane's panel (none for the section's first lane).
+    var gap: CGFloat { lane == AgentLane.allCases.first ? 0 : 6 }
+
+    var body: some View {
+        HStack {
+            Text(lane.title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(lane.tint)
+            Spacer(minLength: 0)
+            Text("\(count)")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(lane.tint.opacity(0.8))
+        }
+        .padding(.top, 6 + gap)
+        .padding(.bottom, 1)
+        .padding(.horizontal, 6)
+    }
+}
+
+/// An agent's card inside its lane: its own slightly recessed box with a
+/// hairline edge, so agents in a busy lane read as separate things. A card
+/// that has just moved (changed lane, or climbed the list) glows in its
+/// lane's colour for a moment, then fades. Quiet agents shrink to two lines.
+struct AgentLaneCard: View {
+    let entry: AgentEntry
+    let lane: AgentLane
+    let isLast: Bool
+    let isSelected: Bool
+    var isHighlighted = false
+    /// Its ⌘-number (1–9), when it has one.
+    var shortcut: Int? = nil
+    @State private var isHovered = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 5, style: .continuous)
+        AgentRow(entry: entry, compact: lane == .quiet)
+            .padding(.horizontal, 8)
+            .padding(.vertical, lane == .quiet ? 0 : 2)
+            .background(shape.fill(fill))
+            .overlay(shape.strokeBorder(edge, lineWidth: isHighlighted ? 1.5 : 1))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .padding(.bottom, isLast ? 4 : 0)
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .hoverHint(shortcut.map { "Jump here with ⌘\($0)" } ?? "")
+    }
+
+    private var glow: Color { lane.panelTint ?? AppTheme.accent }
+
+    private var fill: Color {
+        if isHighlighted { return glow.opacity(0.16) }
+        if isSelected { return AppTheme.accent.opacity(0.18) }
+        // Recessed: a touch of the sidebar's darker ground over the panel.
+        return isHovered ? Color.primary.opacity(0.05) : AppTheme.sidebarBackground.opacity(0.45)
+    }
+
+    private var edge: Color {
+        if isHighlighted { return glow.opacity(0.85) }
+        if isSelected { return AppTheme.accent.opacity(0.45) }
+        return Color.primary.opacity(0.07)
+    }
+}
+
+/// The Agents section's header, in the sidebar's shared light style, with a
 /// one-glance summary ("2 need you", "3 working") and a collapse toggle.
 struct AgentsSectionHeader: View {
     let entries: [AgentEntry]
     @Binding var isExpanded: Bool
 
     var body: some View {
-        HStack(spacing: 9) {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(AppTheme.accent.opacity(0.16))
-                .frame(width: 18, height: 18)
-                .overlay(
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                )
-            Text("Agents")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .textCase(nil)
-            Spacer(minLength: 0)
+        SidebarSectionLabel(title: "Agents") {
+            EmptyView()
+        } trailing: {
             summary
-                .font(.system(size: 10.5, weight: .medium))
-                .textCase(nil)
                 // Leave room for the sidebar section's hover disclosure chevron.
                 .padding(.trailing, 16)
         }
-        .padding(.vertical, 6)
-        .background(AppTheme.sidebarPanel.padding(.horizontal, -48))
-        .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture { isExpanded.toggle() }
     }
@@ -102,6 +233,8 @@ struct AgentsSectionHeader: View {
 /// has been in its current state.
 struct AgentRow: View {
     let entry: AgentEntry
+    /// Just the title and where it runs — for agents with nothing going on.
+    var compact = false
 
     private var agent: AgentPane { entry.agent }
 
@@ -138,27 +271,27 @@ struct AgentRow: View {
                         ElapsedText(since: since)
                     }
                 }
-                if let line = activityLine {
+                if !compact, let line = activityLine {
                     Text(line.text)
                         .foregroundStyle(line.color)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 11))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .hoverHint(line.text)
                 }
-                if let meta = metaText {
+                if !compact, let meta = metaText {
                     meta
-                        .font(.system(size: 10))
+                        .font(.system(size: 11).monospacedDigit())
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                if agent.state.isBusy || agent.state == .waiting {
+                if !compact, agent.state.isBusy || agent.state == .waiting {
                     ForEach(Array(agent.tasks.prefix(Self.maxTasks).enumerated()), id: \.offset) { _, task in
                         SubagentLine(task: task)
                     }
                     if agent.tasks.count > Self.maxTasks {
                         Text("+\(agent.tasks.count - Self.maxTasks) more")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                             .padding(.leading, 12)
                     }
@@ -223,6 +356,8 @@ struct AgentRow: View {
     /// Claude tints it), context in use, and — while busy — sub-agents running
     /// and tool steps this turn. "▸▸ auto · 88k context · 2 agents · 14 steps".
     private var metaText: Text? {
+        // Mode and context only matter while the agent is doing something.
+        guard agent.state.isBusy || agent.state.needsAttention else { return nil }
         var parts: [Text] = []
         if let mode = ModeStyle(agent.mode) {
             parts.append(Text(mode.label).foregroundStyle(mode.color))
@@ -269,12 +404,12 @@ struct AgentRow: View {
 }
 
 /// "+84 −12" — uncommitted insertions/deletions in the agent's working tree.
-private struct DiffStatText: View {
+struct DiffStatText: View {
     let diff: DiffStat
     var body: some View {
         (Text("+\(diff.added)").foregroundStyle(AppTheme.statusGood)
          + Text(" −\(diff.removed)").foregroundStyle(AppTheme.statusBad))
-            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+            .font(.system(size: 11, weight: .medium).monospacedDigit())
             .hoverHint("Uncommitted: \(diff.added) added, \(diff.removed) removed across "
                        + "\(diff.files) file\(diff.files == 1 ? "" : "s")")
     }
@@ -283,12 +418,12 @@ private struct DiffStatText: View {
 /// How long the agent has been in its current state ("now", "4m", "2h", "3d"),
 /// refreshed on a slow timeline — a per-second tick across a dozen rows would
 /// cost far more than it tells you.
-private struct ElapsedText: View {
+struct ElapsedText: View {
     let since: Date
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             Text(Self.format(context.date.timeIntervalSince(since)))
-                .font(.system(size: 10.5).monospacedDigit())
+                .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(.tertiary)
         }
         .hoverHint("In this state since \(since.formatted(date: .omitted, time: .shortened))")
@@ -334,7 +469,7 @@ private struct SubagentLine: View {
         (Text("○ ").foregroundStyle(.tertiary)
          + Text(type.isEmpty ? "" : type + "  ").foregroundStyle(.secondary)
          + Text(description).foregroundStyle(.primary.opacity(0.8)))
-            .font(.system(size: 10.5))
+            .font(.system(size: 11))
             .lineLimit(1)
             .truncationMode(.tail)
             .hoverHint(task)

@@ -1,10 +1,12 @@
 import SwiftUI
 
 /// SwiftUI colours for the app chrome (sidebar, headers, window, selection),
-/// derived from the same resolved Ghostty theme the terminals use — so the whole
-/// window reads as one theme that follows whatever Ghostty is set to.
+/// derived from the same theme the terminals use (`ThemeStore`) — so the whole
+/// window reads as one theme.
 enum AppTheme {
-    static let resolved = GhosttyThemeReader.resolved
+    /// The chosen theme (see `ThemeStore`); reading it from a view body
+    /// subscribes that view to theme changes.
+    static var resolved: ResolvedTheme { ThemeStore.shared.current }
 
     /// Force the window's light/dark to match the theme, so system text and
     /// materials render with the right contrast over our themed backgrounds.

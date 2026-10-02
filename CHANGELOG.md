@@ -2,6 +2,46 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.1] — 2026-10-02
+
+### Added
+
+- **Live status for every coding agent, not just Claude Code.** Codex,
+  OpenCode, pi and oh-my-pi report their state alongside Claude Code. One
+  click (host menu → **Install Agent Status Hooks…**) installs the hooks for
+  whichever of them are on that machine, locally or over SSH.
+- **Agents in the sidebar,** grouped by what they need from you — **Needs
+  You**, **Just Finished**, **Working**, **Quiet** — each with its task, what
+  it's doing right now in plain words ("Run the test suite", "Approve Bash:
+  git push"), running sub-agents, uncommitted `+/−` and time in state. An
+  agent that just moved up glows briefly; ⌘1–⌘9 jump to them in order.
+- **Agents window** (⇧⌘A): every agent on every host in one sortable table —
+  status, task, folder and branch, activity, sub-agents, permission mode,
+  context in use, steps, changes and time. Double-click to jump to it.
+- **Themes.** View ▸ Theme picks from 20 built-in coding themes (Catppuccin,
+  Tokyo Night, Dracula, Nord, Gruvbox, One Dark, Rosé Pine, GitHub, Kanagawa,
+  Everforest, Solarized, Monokai Pro, Night Owl…) or keeps matching Ghostty.
+  The sidebar and every open terminal recolour instantly.
+- **Hover actions in the sidebar** — pin, new window and close without
+  right-clicking.
+
+### Changed
+
+- **Redesigned Mac sidebar** on one spacing grid: a single icon column,
+  windows titled by what they are (a shell shows its folder, an agent its
+  task, editors and builds get their own icons), one-window sessions as a
+  single row, and folding sessions. Host names keep their local/remote colour.
+- **More reliable Claude Code status.** "Waiting" shows the moment a
+  permission prompt appears, clears as soon as you approve, API errors show
+  as errors instead of a stuck "Working", a stuck state heals itself after
+  Esc, and two agents in one window no longer overwrite each other.
+- Updated Sparkle (2.10.0), SwiftTerm (1.20.0) and the SSH networking stack.
+
+### Fixed
+
+- **Typing lag and pauses while agents work:** terminals no longer re-render
+  on every tmux update.
+
 ## [2026.08.2] — 2026-08-01
 
 ### Fixed

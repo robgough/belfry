@@ -21,6 +21,16 @@ final class AppModel {
     /// warm while the user works elsewhere.
     let browserTabs = BrowserTabStore()
 
+    /// A request, from outside the main window (the Agents window), to show a
+    /// window and focus one of its panes. The main window applies it to its
+    /// selection and clears it.
+    var jumpRequest: JumpRequest?
+
+    struct JumpRequest: Equatable {
+        let selection: WindowSelection
+        let paneID: String?
+    }
+
     /// Sessions/windows pinned to the top of the sidebar. New pins append;
     /// the user can rearrange by dragging.
     private(set) var pins: [PinnedItem]

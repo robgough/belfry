@@ -5,7 +5,7 @@ import Foundation
 /// theme file, so the terminal *and* the app chrome match whatever Ghostty is set
 /// to. Falls back to Catppuccin Mocha if Ghostty isn't installed or the theme
 /// can't be resolved — so it never breaks, just may not match.
-struct ResolvedTheme: Equatable {
+struct ResolvedTheme: Hashable {
     var background: UInt32
     var foreground: UInt32
     var cursor: UInt32

@@ -3,12 +3,29 @@ import CoreText
 
 /// `.help()` tooltips exist on macOS only; elsewhere this is a no-op.
 extension View {
-    @ViewBuilder
     func hoverHint(_ text: String) -> some View {
+        modifier(HoverHint(text: text))
+    }
+}
+
+extension EnvironmentValues {
+    /// Turns `hoverHint` tooltips off for a subtree. The Mac's native sidebar
+    /// sets it: an AppKit tooltip inside a List row swallows the click, so
+    /// clicking a row's text failed to select it.
+    @Entry var suppressHoverHints = false
+    /// Draw agent badges as plain text glyphs instead of the animated AppKit
+    /// layer — for off-screen rendering (ImageRenderer can't draw AppKit views).
+    @Entry var staticAgentBadges = false
+}
+
+private struct HoverHint: ViewModifier {
+    let text: String
+    @Environment(\.suppressHoverHints) private var suppressed
+    func body(content: Content) -> some View {
         #if os(macOS)
-        help(text)
+        if suppressed || text.isEmpty { content } else { content.help(text) }
         #else
-        self
+        content
         #endif
     }
 }
@@ -47,6 +64,14 @@ struct SessionTreeView: View {
     @State private var lastSelectedSession: SessionRef?
     /// The pin currently being dragged to a new spot (macOS custom reorder).
     @State private var draggedPinID: String?
+    /// Agent ids at the last lane change — only a reorder of the *same*
+    /// agents animates (see `agentReorderAnimation`).
+    @State private var lastAgentIDs: Set<String> = []
+    /// Agents that just changed lane or moved up, briefly glowing so you can
+    /// see which one it was.
+    @State private var justMoved: Set<String> = []
+    /// Multi-window sessions the user has folded ("<host id>|<session id>").
+    @State private var collapsedSessions: Set<String> = []
     /// Whether the Agents section is expanded (remembered across launches).
     @AppStorage("agentsSectionExpanded") private var agentsExpanded = true
 
@@ -68,9 +93,23 @@ struct SessionTreeView: View {
 
     var body: some View {
         platformList
+        // Quick glide when agents change lanes or reorder (rows move rather
+        // than jump). Keyed to lane order only, so ordinary refreshes — tool
+        // activity, timers — don't animate.
+        .animation(agentReorderAnimation, value: agentLaneSignature)
+        .onChange(of: agentLaneSignature) { old, new in
+            noteMovedAgents(old: old, new: new)
+            lastAgentIDs = Set(new)
+        }
+        #if os(macOS)
+        // ⌘1–⌘9 jump to the Nth agent, in the Agents section's order.
+        .background { agentShortcuts }
+        #endif
+        #if os(iOS)
         .scrollContentBackground(.hidden)
-        .background(AppTheme.sidebarBackground)
+        .background(AppTheme.sidebarBackground.ignoresSafeArea())
         .environment(\.defaultMinListRowHeight, Self.minRowHeight)
+        #endif
         // tmux is authoritative for the active window: switching windows with
         // tmux keys (prefix-n, status-bar clicks) moves the active flag on the
         // next store refresh, and the sidebar selection follows instead of going
@@ -81,10 +120,16 @@ struct SessionTreeView: View {
         // snapped the selection to the active window, making non-active (and
         // pinned) windows impossible to open. tmux converges via select-window.
         .onChange(of: followTarget) { oldTarget, target in
-            guard let target, target != selection, selection == oldTarget else { return }
+            guard let target, !target.sameWindow(as: selection),
+                  selection?.sameWindow(as: oldTarget) ?? (oldTarget == nil) else { return }
             selection = target
         }
         .onChange(of: selection, initial: true) { _, sel in
+            // An agent row's selection names its pane too: focus it.
+            if let sel, let pane = sel.paneID,
+               let host = hosts.first(where: { $0.id == sel.hostID }) {
+                host.client.selectPane(pane)
+            }
             // Tell each host which of its windows is on screen: viewing a
             // window marks its finished agents seen (see TmuxStore).
             for host in hosts {
@@ -105,8 +150,7 @@ struct SessionTreeView: View {
         }
     }
 
-    /// macOS renders selection itself (soft theme-accent pill) so the List
-    /// carries no selection binding. iOS MUST use native List selection: in a
+    /// Both platforms use native List selection. iOS MUST: in a
     /// collapsed NavigationSplitView (iPhone) only a native selection change
     /// pushes the detail column — a custom tap gesture updates state the
     /// split view can't see, leaving the terminal unreachable.
@@ -119,8 +163,9 @@ struct SessionTreeView: View {
             .listStyle(.plain)
             .listSectionSpacing(.compact)
         #else
-        List { treeSections }
-            .listStyle(.sidebar)
+        // The Mac sidebar (see MacSidebar.swift).
+        MacSidebarContainer(hosts: hosts, model: model, selection: $selection,
+                            prompt: $prompt, confirm: $confirm, justMoved: justMoved)
         #endif
     }
 
@@ -140,9 +185,11 @@ struct SessionTreeView: View {
         }
         let agents = AgentEntry.collect(from: hosts)
         if !agents.isEmpty {
+            let items = AgentLaneItem.build(agents)
+            let shortcuts = Self.shortcutNumbers(items)
             Section(isExpanded: $agentsExpanded) {
-                ForEach(agents) { entry in
-                    agentRow(for: entry)
+                ForEach(items) { item in
+                    laneRow(for: item, shortcut: shortcuts[item.id])
                 }
             } header: {
                 AgentsSectionHeader(entries: agents, isExpanded: $agentsExpanded)
@@ -152,7 +199,8 @@ struct SessionTreeView: View {
         ForEach(hosts) { host in
             Section(isExpanded: expansionBinding(for: host)) {
                 HostBody(host: host, model: model,
-                         selection: $selection, prompt: $prompt, confirm: $confirm)
+                         selection: $selection, prompt: $prompt, confirm: $confirm,
+                         collapsedSessions: $collapsedSessions)
             } header: {
                 HostHeader(host: host, model: model, isExpanded: expansionBinding(for: host),
                            prompt: $prompt, confirm: $confirm)
@@ -163,25 +211,126 @@ struct SessionTreeView: View {
 
     // MARK: Agents section
 
-    /// A row in the Agents section. Selecting it shows the agent's window and,
-    /// on macOS, focuses the agent's own pane within it (iOS rows select via
-    /// native List selection, which only carries the window).
-    @ViewBuilder private func agentRow(for entry: AgentEntry) -> some View {
-        let target = entry.selection
-        AgentRow(entry: entry)
-            .modifier(WindowSelectionTag(target: target))
-            .modifier(SelectOnTap {
-                selection = target
-                entry.host.client.selectPane(entry.agent.id)
-            })
-            .contextMenu {
-                Button("Show \(entry.agent.kind.displayName)") {
+    /// A row of the Agents section's lanes: a lane header, or an agent's card.
+    /// Selecting a card shows the agent's window and, on macOS, focuses the
+    /// agent's own pane within it (iOS rows select via native List selection,
+    /// which only carries the window). Each row paints its slice of the lane's
+    /// panel as its row background.
+    @ViewBuilder private func laneRow(for item: AgentLaneItem, shortcut: Int?) -> some View {
+        switch item {
+        case .header(let lane, let count):
+            AgentLaneHeader(lane: lane, count: count)
+                .listRowBackground(sidebarRowBackground(selected: false, isTop: true,
+                                                        gap: lane == AgentLane.allCases.first ? 0 : 6,
+                                                        tint: lane.panelTint))
+                .modifier(SidebarRowChrome())
+        case .agent(let entry, let lane, let isLast):
+            let target = entry.selection
+            AgentLaneCard(entry: entry, lane: lane, isLast: isLast, isSelected: selection == target,
+                          isHighlighted: justMoved.contains(entry.id), shortcut: shortcut)
+                .modifier(WindowSelectionTag(target: target))
+                .modifier(SelectOnTap {
                     selection = target
                     entry.host.client.selectPane(entry.agent.id)
+                })
+                .contextMenu {
+                    Button("Show \(entry.agent.kind.displayName)") {
+                        selection = target
+                        entry.host.client.selectPane(entry.agent.id)
+                    }
                 }
+                .listRowBackground(sidebarRowBackground(selected: false, isBottom: isLast,
+                                                        tint: lane.panelTint))
+                .modifier(SidebarRowChrome())
+        }
+    }
+
+    #if os(macOS)
+    /// Invisible buttons carrying the ⌘1–⌘9 agent shortcuts (key equivalents
+    /// reach them even while a terminal has focus).
+    @ViewBuilder private var agentShortcuts: some View {
+        let agents = Self.agentsInDisplayOrder(hosts)
+        ZStack {
+            ForEach(Array(agents.prefix(9).enumerated()), id: \.element.id) { index, entry in
+                Button("") {
+                    selection = entry.selection
+                    entry.host.client.selectPane(entry.agent.id)
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
             }
-            .listRowBackground(sidebarRowBackground(selected: selection == target))
-            .modifier(SidebarRowChrome())
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+    #endif
+
+    /// Agent row id → its ⌘-number (1–9), in display order.
+    static func shortcutNumbers(_ items: [AgentLaneItem]) -> [String: Int] {
+        var map: [String: Int] = [:]
+        var n = 0
+        for case .agent(let entry, _, _) in items where n < 9 {
+            n += 1
+            map[entry.id] = n
+        }
+        return map
+    }
+
+    /// Animate lane changes and reorders only when the same agents are
+    /// involved. Agents arriving or leaving — a host connecting brings dozens
+    /// of rows at once — update instantly: animating a bulk change through the
+    /// sidebar's table is slow enough to stall the window.
+    private var agentReorderAnimation: Animation? {
+        Set(agentLaneSignature) == lastAgentIDs ? .smooth(duration: 0.3) : nil
+    }
+
+    /// Mark agents that changed lane or moved up the list (and existed
+    /// before), then let the glow fade after a moment.
+    private func noteMovedAgents(old: [String], new: [String]) {
+        let oldSet = Set(old)
+        guard !oldSet.isEmpty else { return }
+        func placement(_ ids: [String]) -> [String: (lane: String, index: Int)] {
+            var result: [String: (lane: String, index: Int)] = [:]
+            var lane = ""
+            var index = 0
+            for id in ids {
+                if id.hasPrefix("lane-") { lane = id; continue }
+                result[id] = (lane, index)
+                index += 1
+            }
+            return result
+        }
+        let before = placement(old), after = placement(new)
+        // Only moves that ask for attention glow: into a more urgent lane, or
+        // up within one. Settling down (finished → Quiet) stays quiet.
+        func rank(_ lane: String) -> Int {
+            AgentLane(rawValue: String(lane.dropFirst("lane-".count)))
+                .flatMap { AgentLane.allCases.firstIndex(of: $0) } ?? 0
+        }
+        let moved = after.compactMap { id, now -> String? in
+            guard oldSet.contains(id), let was = before[id] else { return nil }
+            if was.lane != now.lane { return rank(now.lane) < rank(was.lane) ? id : nil }
+            return now.index < was.index ? id : nil
+        }
+        guard !moved.isEmpty else { return }
+        justMoved.formUnion(moved)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1400))
+            withAnimation(.easeOut(duration: 0.8)) { justMoved.subtract(moved) }
+        }
+    }
+
+    /// Agents in the order the lanes show them (what ⌘1–⌘9 count through).
+    static func agentsInDisplayOrder(_ hosts: [HostModel]) -> [AgentEntry] {
+        AgentLaneItem.build(AgentEntry.collect(from: hosts)).compactMap {
+            if case .agent(let entry, _, _) = $0 { return entry } else { return nil }
+        }
+    }
+
+    /// Lane membership and order — the list animates whenever it changes, so
+    /// agents glide between lanes instead of jumping.
+    private var agentLaneSignature: [String] {
+        AgentLaneItem.build(AgentEntry.collect(from: hosts)).map(\.id)
     }
 
     // MARK: Pinned section
@@ -225,7 +374,9 @@ struct SessionTreeView: View {
                 }
                 Button(pin.windowID == nil ? "Unpin Session" : "Unpin Window") { model.unpin(pin) }
             }
-            .listRowBackground(sidebarRowBackground(selected: target != nil && selection == target))
+            .listRowBackground(sidebarRowBackground(selected: target != nil && selection == target,
+                                                    isTop: index == 0,
+                                                    isBottom: index == model.pins.count - 1))
             .modifier(SidebarRowChrome())
     }
 
@@ -303,16 +454,133 @@ struct SessionTreeView: View {
 /// background changes only the visuals, not List-selection mechanics, so
 /// iPhone detail navigation keeps working. Shared by the host tree and the
 /// Pinned section.
-@ViewBuilder func sidebarRowBackground(selected: Bool) -> some View {
-    if selected {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(AppTheme.accent.opacity(0.15))
-            .padding(.horizontal, 3)
-            .padding(.vertical, 1)
-    } else {
-        #if os(iOS)
-        Color.clear
-        #endif
+@ViewBuilder func sidebarRowBackground(selected: Bool, isTop: Bool = false, isBottom: Bool = false,
+                                       gap: CGFloat = 0, tint: Color? = nil) -> some View {
+    SidebarPanelSlice(isTop: isTop, isBottom: isBottom, selected: selected, gap: gap, tint: tint)
+}
+
+/// One row's slice of a sidebar group's panel. Every group — Pinned, each
+/// agent lane, each host's sessions — is one inset panel in the theme's
+/// panel tone: the group's first row draws the rounded top, its last row the
+/// rounded bottom, and the rows between plain bands, so consecutive rows read
+/// as one container. A tinted panel (the agent lanes that want your eye) adds
+/// a faint wash of its colour and a hairline along its outer edge; a selected
+/// row adds the soft accent fill inside its band.
+struct SidebarPanelSlice: View {
+    var isTop = false
+    var isBottom = false
+    var selected = false
+    /// Space above the panel (between consecutive panels in one section).
+    var gap: CGFloat = 0
+    var tint: Color? = nil
+    /// Whether to lay the theme's panel tone under the slice. Off in the Mac's
+    /// native sidebar, where the system material shows through the tint.
+    var showsBase = true
+    /// Whether to draw the tint's hairline outline (off in the native sidebar,
+    /// where it doubled up with the system's selection highlight).
+    var showsEdge = true
+    /// Horizontal insets from the row's edges. The native sidebar matches
+    /// the system selection highlight's, so the wash and the selection share
+    /// edges.
+    var leadingInset: CGFloat = Self.inset
+    var trailingInset: CGFloat = Self.inset
+
+    static let radius: CGFloat = 6
+    static let inset: CGFloat = 6
+
+    var body: some View {
+        let shape = UnevenRoundedRectangle(
+            topLeadingRadius: isTop ? Self.radius : 0,
+            bottomLeadingRadius: isBottom ? Self.radius : 0,
+            bottomTrailingRadius: isBottom ? Self.radius : 0,
+            topTrailingRadius: isTop ? Self.radius : 0,
+            style: .continuous)
+        ZStack {
+            if showsBase { shape.fill(AppTheme.sidebarPanel) }
+            if let tint {
+                shape.fill(tint.opacity(0.05))
+                if showsEdge {
+                    PanelEdge(isTop: isTop, isBottom: isBottom, radius: Self.radius)
+                        .stroke(tint.opacity(0.2), lineWidth: 1)
+                }
+            }
+            if selected {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(AppTheme.accent.opacity(0.18))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+            }
+        }
+        .padding(.top, isTop ? gap : 0)
+        .padding(.leading, leadingInset)
+        .padding(.trailing, trailingInset)
+    }
+}
+
+/// The outer edge of one row's slice of a panel: both sides always, plus the
+/// rounded top on the first row and the rounded bottom on the last — so a
+/// stack of slices strokes one continuous outline with no seams between rows.
+private struct PanelEdge: Shape {
+    let isTop: Bool
+    let isBottom: Bool
+    let radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let r = rect.insetBy(dx: 0.5, dy: 0)
+        let top = isTop ? r.minY + 0.5 : r.minY
+        let bottom = isBottom ? r.maxY - 0.5 : r.maxY
+        let k = radius
+        var p = Path()
+        // Left side, down; then the bottom (if this slice ends the panel).
+        p.move(to: CGPoint(x: r.minX, y: isTop ? top + k : top))
+        if isBottom {
+            p.addLine(to: CGPoint(x: r.minX, y: bottom - k))
+            p.addQuadCurve(to: CGPoint(x: r.minX + k, y: bottom), control: CGPoint(x: r.minX, y: bottom))
+            p.addLine(to: CGPoint(x: r.maxX - k, y: bottom))
+            p.addQuadCurve(to: CGPoint(x: r.maxX, y: bottom - k), control: CGPoint(x: r.maxX, y: bottom))
+        } else {
+            p.addLine(to: CGPoint(x: r.minX, y: bottom))
+            p.move(to: CGPoint(x: r.maxX, y: bottom))
+        }
+        // Right side, up; then the top (if this slice starts the panel).
+        if isTop {
+            p.addLine(to: CGPoint(x: r.maxX, y: top + k))
+            p.addQuadCurve(to: CGPoint(x: r.maxX - k, y: top), control: CGPoint(x: r.maxX, y: top))
+            p.addLine(to: CGPoint(x: r.minX + k, y: top))
+            p.addQuadCurve(to: CGPoint(x: r.minX, y: top + k), control: CGPoint(x: r.minX, y: top))
+        } else {
+            p.addLine(to: CGPoint(x: r.maxX, y: top))
+        }
+        return p
+    }
+}
+
+/// The section header shared by Pinned, Agents and every host, in the Mac
+/// sidebar idiom: a small bold Title Case label (with an optional leading
+/// mark) and a summary on the right. No band or icon chip — the panels below
+/// carry the structure.
+struct SidebarSectionLabel<Leading: View, Trailing: View>: View {
+    let title: String
+    var tint: Color = .secondary
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 6) {
+            leading
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .textCase(nil)
+            Spacer(minLength: 4)
+            trailing
+                .font(.system(size: 11))
+                .textCase(nil)
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 3)
+        .padding(.horizontal, 4)
     }
 }
 
@@ -512,68 +780,54 @@ private struct HostHeader: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 9) {
-            HostIconChip(systemName: host.transport.isLocal ? "desktopcomputer" : "globe",
-                         status: host.store.status)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(host.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppTheme.hostTint(isLocal: host.transport.isLocal))
-                    .textCase(nil)
+        SidebarSectionLabel(title: host.displayName,
+                            tint: AppTheme.hostTint(isLocal: host.transport.isLocal)) {
+            HostStatusDot(status: host.store.status)
+        } trailing: {
+            // Hover swaps the summary for the host's actions (same slot).
+            ZStack(alignment: .trailing) {
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                        .textCase(nil)
+                        .opacity(actionsVisible(hovered: isHovered) ? 0 : 1)
                 }
-            }
-            Spacer(minLength: 0)
-            HStack(spacing: 2) {
-                HoverIconButton(systemName: "plus",
-                                hint: "New session on \(host.displayName)") {
-                    prompt = .newSession(host: host)
-                }
-                if host.canDisconnect {
-                    switch host.store.status {
-                    case .connected, .connecting, .reconnecting:
-                        HoverIconButton(systemName: "power",
-                                        hint: "Disconnect (sessions keep running)") {
-                            host.disconnect()
-                        }
-                    case .disconnected, .offline:
-                        HoverIconButton(systemName: "power",
-                                        hint: "Connect to \(host.displayName)") {
-                            host.reconnect()
+                HStack(spacing: 2) {
+                    HoverIconButton(systemName: "plus",
+                                    hint: "New session on \(host.displayName)") {
+                        prompt = .newSession(host: host)
+                    }
+                    if host.canDisconnect {
+                        switch host.store.status {
+                        case .connected, .connecting, .reconnecting:
+                            HoverIconButton(systemName: "power",
+                                            hint: "Disconnect (sessions keep running)") {
+                                host.disconnect()
+                            }
+                        case .disconnected, .offline:
+                            HoverIconButton(systemName: "power",
+                                            hint: "Connect to \(host.displayName)") {
+                                host.reconnect()
+                            }
                         }
                     }
+                    #if os(iOS)
+                    // Section headers don't get long-press context menus on iOS, so the
+                    // host actions (Disconnect/Connect, Remove…) need a visible button.
+                    Menu {
+                        menu
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                    }
+                    #endif
                 }
+                .opacity(actionsVisible(hovered: isHovered) ? 1 : 0)
+                .allowsHitTesting(actionsVisible(hovered: isHovered))
             }
-            .opacity(actionsVisible(hovered: isHovered) ? 1 : 0)
-            .allowsHitTesting(actionsVisible(hovered: isHovered))
             // Leave room for the sidebar section's hover disclosure chevron.
             .padding(.trailing, 16)
-            #if os(iOS)
-            // Section headers don't get long-press context menus on iOS, so the
-            // host actions (Disconnect/Connect, Remove…) need a visible button.
-            Menu {
-                menu
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-            }
-            #endif
         }
-        .padding(.vertical, 6)
-        // The machine line is the anchor of its group: a full-bleed band
-        // behind the header makes each host read as a distinct block, and the
-        // section's hover disclosure chevron lands on the band instead of
-        // floating beside it. Section headers float above the list (no
-        // listRowBackground), so the band over-extends well past the List's
-        // margins — including the extra trailing space the header loses to
-        // the hover chevron — and the sidebar edge clips it flush.
-        .background(AppTheme.sidebarPanel.padding(.horizontal, -48))
-        .padding(.vertical, 2)
         .contentShape(Rectangle())
         // The whole machine line toggles its sessions — quicker than hunting
         // the little chevron. The hover buttons still win over the tap.
@@ -583,16 +837,29 @@ private struct HostHeader: View {
         .contextMenu { menu }
     }
 
-    /// "2 sessions · 5 windows" while connected; hidden when empty or down
-    /// (the status row below the header explains those states).
+    /// "11 sessions" while connected; hidden when empty or down (the status
+    /// row below the header explains those states).
     private var subtitle: String? {
         guard host.store.status.isLive, !host.store.sessions.isEmpty else { return nil }
         let sessions = host.store.sessions.count
-        let windows = host.store.sessions.reduce(0) { $0 + $1.windows.count }
-        return "\(sessions) session\(sessions == 1 ? "" : "s") · \(windows) window\(windows == 1 ? "" : "s")"
+        return "\(sessions) session\(sessions == 1 ? "" : "s")"
     }
 
     @ViewBuilder private var menu: some View {
+        HostMenuItems(host: host, model: model, prompt: $prompt, confirm: $confirm)
+    }
+}
+
+/// A host's context-menu items: new session, agent-status hooks, connect /
+/// disconnect, remove. Shared by the iOS sidebar's host header and the Mac's
+/// native sidebar.
+struct HostMenuItems: View {
+    let host: HostModel
+    let model: AppModel
+    @Binding var prompt: SidebarPrompt?
+    @Binding var confirm: ConfirmAction?
+
+    var body: some View {
         Button("New Session…") { prompt = .newSession(host: host) }
         Divider()
         agentHooksItems
@@ -612,7 +879,6 @@ private struct HostHeader: View {
             }
         }
     }
-
     /// Agent-status-hook state + install action for this host (Claude Code,
     /// Codex, OpenCode, pi, omp — whichever are installed there).
     @ViewBuilder private var agentHooksItems: some View {
@@ -654,51 +920,129 @@ private struct HostBody: View {
     @Binding var selection: WindowSelection?
     @Binding var prompt: SidebarPrompt?
     @Binding var confirm: ConfirmAction?
+    @Binding var collapsedSessions: Set<String>
+
+    /// The host's rows, flattened so each knows whether it opens or closes
+    /// the host's panel. A session with one window is a single row (session
+    /// and window are the same thing to you); a session with several gets a
+    /// foldable header with its windows beneath.
+    private enum Row: Identifiable {
+        case header(TmuxSession)
+        case window(TmuxSession, TmuxWindow, merged: Bool)
+        var id: String {
+            switch self {
+            case .header(let s): "s\(s.id)"
+            case .window(_, let w, _): "w\(w.id)"
+            }
+        }
+    }
+
+    private var rows: [Row] {
+        var rows: [Row] = []
+        for session in host.store.sessions {
+            if session.windows.count == 1, let only = session.windows.first {
+                rows.append(.window(session, only, merged: true))
+                continue
+            }
+            rows.append(.header(session))
+            if !isCollapsed(session) {
+                rows += session.windows.map { .window(session, $0, merged: false) }
+            }
+        }
+        return rows
+    }
+
+    private func key(_ session: TmuxSession) -> String { "\(host.id)|\(session.id)" }
+    private func isCollapsed(_ session: TmuxSession) -> Bool { collapsedSessions.contains(key(session)) }
 
     var body: some View {
-        ForEach(host.store.sessions) { session in
-            SessionHeader(host: host, session: session,
-                          isPinned: model.isSessionPinned(hostID: host.id, sessionID: session.id),
-                          togglePin: { model.togglePin(host: host, session: session) },
-                          kill: { confirm = killSessionConfirm(session) })
-                .contextMenu { sessionMenu(session) }
-                .listRowBackground(sidebarRowBackground(selected: false))
-                .modifier(SidebarRowChrome())
-            ForEach(session.windows) { window in
+        let rows = rows
+        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+            let isTop = index == 0
+            let isBottom = index == rows.count - 1
+            switch row {
+            case .header(let session):
+                SessionHeader(host: host, session: session,
+                              isPinned: model.isSessionPinned(hostID: host.id, sessionID: session.id),
+                              isCollapsed: isCollapsed(session),
+                              toggleCollapsed: {
+                                  withAnimation(.snappy(duration: 0.25)) {
+                                      if isCollapsed(session) { collapsedSessions.remove(key(session)) }
+                                      else { collapsedSessions.insert(key(session)) }
+                                  }
+                              },
+                              togglePin: { model.togglePin(host: host, session: session) },
+                              kill: { confirm = killSessionConfirm(session) })
+                    .contextMenu { sessionMenu(session) }
+                    .listRowBackground(sidebarRowBackground(selected: false, isTop: isTop, isBottom: isBottom))
+                    .modifier(SidebarRowChrome())
+            case .window(let session, let window, let merged):
                 let windowSelection = WindowSelection(hostID: host.id, windowID: window.id)
-                WindowRow(host: host, window: window,
-                          isPinned: model.isWindowPinned(hostID: host.id, windowID: window.id),
-                          togglePin: { model.togglePin(host: host, session: session, window: window) },
-                          kill: { confirm = killWindowConfirm(session, window) })
+                WindowRow(host: host, window: window, session: merged ? session : nil,
+                          isPinned: merged
+                              ? model.isSessionPinned(hostID: host.id, sessionID: session.id)
+                              : model.isWindowPinned(hostID: host.id, windowID: window.id),
+                          togglePin: {
+                              if merged { model.togglePin(host: host, session: session) }
+                              else { model.togglePin(host: host, session: session, window: window) }
+                          },
+                          kill: { confirm = merged ? killSessionConfirm(session) : killWindowConfirm(session, window) })
                     .tag(windowSelection)   // iOS native selection (pushes detail on iPhone)
                     .modifier(SelectOnTap { selection = windowSelection })
-                    .contextMenu { windowMenu(session, window) }
-                    .listRowBackground(sidebarRowBackground(selected: selection == windowSelection))
+                    .contextMenu {
+                        windowMenu(session, window)
+                        if merged {
+                            Divider()
+                            sessionMenu(session)
+                        }
+                    }
+                    .listRowBackground(sidebarRowBackground(selected: selection == windowSelection,
+                                                            isTop: isTop, isBottom: isBottom))
                     .modifier(SidebarRowChrome())
             }
         }
         if host.store.sessions.isEmpty {
             HostStatusRow(host: host)
-                .listRowBackground(sidebarRowBackground(selected: false))
+                .padding(.horizontal, 4)
+                .listRowBackground(sidebarRowBackground(selected: false, isTop: true, isBottom: true))
                 .modifier(SidebarRowChrome())
         }
     }
 
     private func killSessionConfirm(_ session: TmuxSession) -> ConfirmAction {
+        SessionMenuItems.killConfirm(host: host, session: session)
+    }
+
+    private func killWindowConfirm(_ session: TmuxSession, _ window: TmuxWindow) -> ConfirmAction {
+        WindowMenuItems.killConfirm(host: host, window: window)
+    }
+
+    @ViewBuilder private func sessionMenu(_ session: TmuxSession) -> some View {
+        SessionMenuItems(host: host, model: model, session: session, prompt: $prompt, confirm: $confirm)
+    }
+
+    @ViewBuilder private func windowMenu(_ session: TmuxSession, _ window: TmuxWindow) -> some View {
+        WindowMenuItems(host: host, model: model, session: session, window: window,
+                        prompt: $prompt, confirm: $confirm)
+    }
+}
+
+/// A session's context-menu items (new window, rename, pin, kill).
+struct SessionMenuItems: View {
+    let host: HostModel
+    let model: AppModel
+    let session: TmuxSession
+    @Binding var prompt: SidebarPrompt?
+    @Binding var confirm: ConfirmAction?
+
+    static func killConfirm(host: HostModel, session: TmuxSession) -> ConfirmAction {
         ConfirmAction(
             title: "Kill session “\(session.name)”?",
             message: "Ends the session and all its windows on \(host.displayName).",
             confirmLabel: "Kill") { host.client.killSession(id: session.id) }
     }
 
-    private func killWindowConfirm(_ session: TmuxSession, _ window: TmuxWindow) -> ConfirmAction {
-        ConfirmAction(
-            title: "Kill window “\(window.name.isEmpty ? "window \(window.index)" : window.name)”?",
-            message: "Closes the window on \(host.displayName).",
-            confirmLabel: "Kill") { host.client.killWindow(id: window.id) }
-    }
-
-    @ViewBuilder private func sessionMenu(_ session: TmuxSession) -> some View {
+    var body: some View {
         Button("New Window") { host.client.newWindow(inSession: session.id) }
         Button("Rename Session…") { prompt = .renameSession(host: host, session: session) }
         Button(model.isSessionPinned(hostID: host.id, sessionID: session.id)
@@ -706,10 +1050,27 @@ private struct HostBody: View {
             model.togglePin(host: host, session: session)
         }
         Divider()
-        Button("Kill Session", role: .destructive) { confirm = killSessionConfirm(session) }
+        Button("Kill Session", role: .destructive) { confirm = Self.killConfirm(host: host, session: session) }
+    }
+}
+
+/// A window's context-menu items (splits, rename, new window, pin, kill).
+struct WindowMenuItems: View {
+    let host: HostModel
+    let model: AppModel
+    let session: TmuxSession
+    let window: TmuxWindow
+    @Binding var prompt: SidebarPrompt?
+    @Binding var confirm: ConfirmAction?
+
+    static func killConfirm(host: HostModel, window: TmuxWindow) -> ConfirmAction {
+        ConfirmAction(
+            title: "Kill window “\(window.name.isEmpty ? "window \(window.index)" : window.name)”?",
+            message: "Closes the window on \(host.displayName).",
+            confirmLabel: "Kill") { host.client.killWindow(id: window.id) }
     }
 
-    @ViewBuilder private func windowMenu(_ session: TmuxSession, _ window: TmuxWindow) -> some View {
+    var body: some View {
         Button {
             host.client.splitWindow(id: window.id, horizontal: true)
         } label: {
@@ -728,7 +1089,7 @@ private struct HostBody: View {
             model.togglePin(host: host, session: session, window: window)
         }
         Divider()
-        Button("Kill Window", role: .destructive) { confirm = killWindowConfirm(session, window) }
+        Button("Kill Window", role: .destructive) { confirm = Self.killConfirm(host: host, window: window) }
     }
 }
 
@@ -738,7 +1099,7 @@ private struct HostBody: View {
 /// so pins survive disconnects and tmux-server restarts and re-light when the
 /// target comes back.
 @MainActor
-private struct ResolvedPin {
+struct ResolvedPin {
     let pin: PinnedItem
     let host: HostModel?
     let session: TmuxSession?
@@ -765,28 +1126,16 @@ private struct ResolvedPin {
     }
 }
 
-/// Header band for the Pinned section — the same full-bleed treatment as
-/// `HostHeader`, so the section anchors the sidebar the way host groups do.
+/// The Pinned section's header, in the shared light style.
 private struct PinnedSectionHeader: View {
     var body: some View {
-        HStack(spacing: 9) {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(AppTheme.accent.opacity(0.16))
-                .frame(width: 18, height: 18)
-                .overlay(
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                )
-            Text("Pinned")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .textCase(nil)
-            Spacer(minLength: 0)
+        SidebarSectionLabel(title: "Pinned") {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+        } trailing: {
+            EmptyView()
         }
-        .padding(.vertical, 6)
-        .background(AppTheme.sidebarPanel.padding(.horizontal, -48))
-        .padding(.vertical, 2)
     }
 }
 
@@ -801,6 +1150,7 @@ private struct PinnedRow: View {
     let resolved: ResolvedPin
     let unpin: () -> Void
     @State private var pinHovered = false
+    @State private var rowHovered = false
 
     var body: some View {
         HStack(spacing: 7) {
@@ -836,18 +1186,18 @@ private struct PinnedRow: View {
                 if let agentTitle {
                     Text(agentTitle)
                         .lineLimit(1)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
                         .hoverHint(agentTitleHint)
                 }
                 contextText
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let pathLine {
                     Text(pathLine)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -868,7 +1218,14 @@ private struct PinnedRow: View {
             }
         }
         .padding(.vertical, 4)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color.primary.opacity(rowHovered ? 0.05 : 0))
+        )
         .contentShape(Rectangle())
+        .onHover { rowHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: rowHovered)
         .opacity(resolved.isLive ? 1 : 0.55)
         .animation(.easeOut(duration: 0.12), value: pinHovered)
     }
@@ -961,21 +1318,14 @@ extension ConnectionStatus {
     }
 }
 
-/// Host icon in a status-tinted chip — anchors each host group on the left and
-/// shows the connection state by colour (hover for the exact status). Uses the
-/// terminal theme's own green/amber, matching the group rail below it.
-private struct HostIconChip: View {
-    let systemName: String
+/// The host's connection state as a small dot beside its name (hover for the
+/// exact status), in the terminal theme's own green/amber.
+struct HostStatusDot: View {
     let status: ConnectionStatus
     var body: some View {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(status.tint.opacity(0.16))
-            .frame(width: 18, height: 18)
-            .overlay(
-                Image(systemName: systemName)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(status.tint)
-            )
+        Circle()
+            .fill(status.tint)
+            .frame(width: 6, height: 6)
             .hoverHint(statusText)
     }
     private var statusText: String {
@@ -989,94 +1339,137 @@ private struct HostIconChip: View {
     }
 }
 
-
-
-private struct HostStatusRow: View {
+struct HostStatusRow: View {
     let host: HostModel
     var body: some View {
         switch host.store.status {
         case .connecting:
             Label("Connecting…", systemImage: "ellipsis.circle")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         case .reconnecting(let attempt):
             Label("Reconnecting… (\(attempt))", systemImage: "arrow.clockwise")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         case .connected:
-            Text("No sessions").font(.caption).foregroundStyle(.secondary)
+            Text("No sessions").font(.system(size: 11)).foregroundStyle(.secondary)
         case .disconnected(let reason):
             // Reasons are real ssh/shell diagnostics and easily outgrow the
             // sidebar: wrap a few lines, and carry the full text in a tooltip.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Label(reason, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.system(size: 11)).foregroundStyle(.orange)
                     .lineLimit(3)
                     .help(reason)
                 InlineLinkButton(title: "Reconnect") { host.reconnect() }
             }
         case .offline:
             HStack(spacing: 6) {
-                Text("Disconnected").font(.caption).foregroundStyle(.secondary)
+                Text("Disconnected").font(.system(size: 11)).foregroundStyle(.secondary)
                 InlineLinkButton(title: "Connect") { host.reconnect() }
             }
         }
     }
 }
 
+/// A multi-window session's header: a disclosure chevron and the session's
+/// name as a small label over its windows. Folded, it still says what's
+/// inside — the most urgent agent's glyph and how many windows.
 private struct SessionHeader: View {
     let host: HostModel
     let session: TmuxSession
     let isPinned: Bool
+    let isCollapsed: Bool
+    let toggleCollapsed: () -> Void
     let togglePin: () -> Void
     let kill: () -> Void
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                .frame(width: 16)
             Text(session.name)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
-            Spacer(minLength: 0)
-            HStack(spacing: 2) {
-                HoverIconButton(systemName: isPinned ? "pin.slash" : "pin",
-                                hint: isPinned ? "Unpin “\(session.name)”"
-                                               : "Pin “\(session.name)” to the top of the sidebar",
-                                action: togglePin)
-                HoverIconButton(systemName: "plus.square.on.square",
-                                hint: "New window in “\(session.name)”") {
-                    host.client.newWindow(inSession: session.id)
-                }
-                HoverIconButton(systemName: "xmark",
-                                hint: "Kill session “\(session.name)”…", action: kill)
+            if isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.tertiary)
             }
-            .opacity(actionsVisible(hovered: isHovered) ? 1 : 0)
-            .allowsHitTesting(actionsVisible(hovered: isHovered))
+            Spacer(minLength: 0)
+            ZStack(alignment: .trailing) {
+                summary
+                    .opacity(actionsVisible(hovered: isHovered) ? 0 : 1)
+                HStack(spacing: 2) {
+                    HoverIconButton(systemName: isPinned ? "pin.slash" : "pin",
+                                    hint: isPinned ? "Unpin “\(session.name)”"
+                                                   : "Pin “\(session.name)” to the top of the sidebar",
+                                    action: togglePin)
+                    HoverIconButton(systemName: "plus.square.on.square",
+                                    hint: "New window in “\(session.name)”") {
+                        host.client.newWindow(inSession: session.id)
+                    }
+                    HoverIconButton(systemName: "xmark",
+                                    hint: "Kill session “\(session.name)”…", action: kill)
+                }
+                .opacity(actionsVisible(hovered: isHovered) ? 1 : 0)
+                .allowsHitTesting(actionsVisible(hovered: isHovered))
+            }
         }
-        .padding(.top, 4)
+        .padding(.top, 5)
         .padding(.bottom, 1)
+        .padding(.horizontal, 4)
         .contentShape(Rectangle())
+        .onTapGesture(perform: toggleCollapsed)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
     }
+
+    /// Folded: the most urgent agent inside, then the window count.
+    @ViewBuilder private var summary: some View {
+        HStack(spacing: 5) {
+            if isCollapsed, let agent = session.windows.compactMap(\.primaryAgent)
+                .max(by: { $0.state.urgency < $1.state.urgency }) {
+                AgentBadge(state: agent.state, kind: agent.kind, title: agent.name, unseen: agent.finishedUnseen)
+            }
+            Text("\(session.windows.count)")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.tertiary)
+        }
+    }
 }
 
+/// A window — or, for a one-window session, the session itself (`session`
+/// set): an SF Symbol for what's running in a fixed icon column, a title
+/// that says what the window *is* (see `TmuxWindow.title`) with its folder
+/// dimmed beside it, and the status badges on the right. The tmux index sits
+/// faintly at the end, like a shortcut hint. Hovering highlights the row and
+/// swaps the badges for its actions.
 private struct WindowRow: View {
     let host: HostModel
     let window: TmuxWindow
+    /// Set when this row stands for a whole one-window session.
+    var session: TmuxSession? = nil
     let isPinned: Bool
     let togglePin: () -> Void
     let kill: () -> Void
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 7) {
-            WindowIndexChip(index: window.index, isActive: window.isActive)
-            Text(window.name.isEmpty ? "window \(window.index)" : window.name)
-                .font(.system(size: 12, weight: window.isActive ? .medium : .regular))
-                .foregroundStyle(window.isActive ? .primary : .secondary)
+        HStack(spacing: 6) {
+            Image(systemName: window.symbol)
+                .font(.system(size: 11))
+                .foregroundStyle(window.isActive || session != nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                .frame(width: 16)
+            titleText
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
-            // Hover swaps the status badges for the split actions (they share
-            // the trailing slot); badges come back when the pointer leaves.
+            // Hover swaps the status badges for the actions (they share the
+            // trailing slot); badges come back when the pointer leaves.
             ZStack(alignment: .trailing) {
                 badges
                     .opacity(isHovered ? 0 : 1)
@@ -1085,31 +1478,62 @@ private struct WindowRow: View {
                     .allowsHitTesting(isHovered)
             }
         }
-        .padding(.leading, 18)
-        .padding(.vertical, 1)
+        .padding(.leading, session == nil ? 12 : 0)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color.primary.opacity(isHovered ? 0.05 : 0))
+        )
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 
+    /// One-window session: the session's name, then what the window is.
+    /// Window: its title, then its folder.
+    private var titleText: Text {
+        if let session {
+            let detail = window.title == session.name ? window.titleDetail : window.title
+            return Text(session.name).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
+                + Text(detail.isEmpty ? "" : "  \(detail)").font(.system(size: 11)).foregroundStyle(.tertiary)
+        }
+        let detail = window.titleDetail
+        return Text(window.title)
+            .font(.system(size: 13, weight: window.isActive ? .medium : .regular))
+            .foregroundStyle(window.isActive ? .primary : .secondary)
+            + Text(detail.isEmpty ? "" : "  \(detail)").font(.system(size: 11)).foregroundStyle(.tertiary)
+    }
+
     private var badges: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             if isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 8))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
                     .hoverHint("Pinned to the top of the sidebar")
             }
             WindowBadges(window: window)
+            if session == nil {
+                Text("\(window.index)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(window.isActive ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
+                    .hoverHint(window.isActive ? "Active window (index \(window.index))" : "Window index \(window.index)")
+            }
         }
     }
 
     private var actions: some View {
         HStack(spacing: 2) {
             HoverIconButton(systemName: isPinned ? "pin.slash" : "pin",
-                            hint: isPinned ? "Unpin this window"
-                                           : "Pin to the top of the sidebar",
+                            hint: isPinned ? "Unpin" : "Pin to the top of the sidebar",
                             action: togglePin)
+            if let session {
+                HoverIconButton(systemName: "plus.square.on.square",
+                                hint: "New window in “\(session.name)”") {
+                    host.client.newWindow(inSession: session.id)
+                }
+            }
             HoverIconButton(systemName: "rectangle.split.2x1",
                             hint: "Split left / right") {
                 host.client.splitWindow(id: window.id, horizontal: true)
@@ -1119,14 +1543,15 @@ private struct WindowRow: View {
                 host.client.splitWindow(id: window.id, horizontal: false)
             }
             HoverIconButton(systemName: "xmark",
-                            hint: "Kill this window…", action: kill)
+                            hint: session == nil ? "Kill this window…" : "Kill session “\(session!.name)”…",
+                            action: kill)
         }
     }
 }
 
 /// Status badges shared by tree window rows and pinned window rows: the bell,
 /// the agent state chip, or the unseen-activity dot.
-private struct WindowBadges: View {
+struct WindowBadges: View {
     let window: TmuxWindow
     var body: some View {
         HStack(spacing: 5) {
@@ -1144,26 +1569,6 @@ private struct WindowBadges: View {
                     .hoverHint("Unseen activity")
             }
         }
-    }
-}
-
-/// The tmux window index in a small chip — active window gets an accent-tinted
-/// fill (same treatment as the host chip and agent badges), inactive ones a
-/// plain secondary numeral. Doubles as the "which window is prefix-N" hint.
-private struct WindowIndexChip: View {
-    let index: Int
-    let isActive: Bool
-
-    var body: some View {
-        Text("\(index)")
-            .font(.system(size: 10, weight: isActive ? .bold : .regular).monospacedDigit())
-            .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-            .frame(width: 16, height: 15)
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(isActive ? Color.accentColor.opacity(0.16) : Color.clear)
-            )
-            .hoverHint(isActive ? "Active window (index \(index))" : "Window index \(index)")
     }
 }
 
@@ -1219,8 +1624,24 @@ struct AgentBadge: View {
     /// A braille badge — a static cell, a pulsing cell, or (with >1 glyph) the
     /// cycling spinner — tinted and tooltipped. The view carries its own colour
     /// and size, so no font/foregroundStyle is needed here.
+    @Environment(\.staticAgentBadges) private var staticBadges
+
+    @ViewBuilder
     private func cell(_ color: Color, glyphs: [String], pulses: Bool = false, tip: String) -> some View {
+        if staticBadges {
+            Text(glyphs.first ?? brailleFullCell)
+                .font(.system(size: glyphPointSize, design: .monospaced))
+                .foregroundStyle(color)
+                .frame(width: glyphPointSize * 0.8, height: glyphPointSize * 1.2)
+        } else {
+            animatedCell(color, glyphs: glyphs, pulses: pulses, tip: tip)
+        }
+    }
+
+    private func animatedCell(_ color: Color, glyphs: [String], pulses: Bool, tip: String) -> some View {
         BrailleBadge(color: color, pointSize: glyphPointSize, glyphs: glyphs, pulses: pulses)
+            // The glyphs are pre-rendered bitmaps: rebuild them on a theme change.
+            .id(ThemeStore.shared.selectedID)
             .hoverHint(title.isEmpty ? tip : "\(tip) — session “\(title)”")
     }
 }

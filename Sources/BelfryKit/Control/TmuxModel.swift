@@ -5,6 +5,17 @@ import Foundation
 struct WindowSelection: Hashable {
     let hostID: String
     let windowID: String
+    /// Set when the selection came from an agent row: that agent's pane, to
+    /// focus within the window. Lets the Mac's native list selection carry
+    /// "this agent" (keyboard selection included) rather than just a window,
+    /// and keeps an agent row's highlight separate from its window's row.
+    var paneID: String? = nil
+
+    /// Same host and window, whatever the pane.
+    func sameWindow(as other: WindowSelection?) -> Bool {
+        guard let other else { return false }
+        return hostID == other.hostID && windowID == other.windowID
+    }
 }
 
 /// Connection state of a host's control-mode link.
@@ -35,6 +46,8 @@ struct TmuxWindow: Identifiable, Hashable {
     var hasBell: Bool = false
     /// Coding agents running in this window's panes (see `AgentPane.detect`).
     var agents: [AgentPane] = []
+    /// The active pane's foreground command (e.g. "zsh", "nvim", "2.1.284").
+    var command: String = ""
     /// tmux's `pane_current_path` for the window's active pane ("" when unknown).
     /// Shown on pinned rows, where a window appears outside its host grouping.
     var currentPath: String = ""
@@ -53,6 +66,66 @@ struct TmuxWindow: Identifiable, Hashable {
 
     /// The primary agent's session name ("" when unknown).
     var agentName: String { primaryAgent?.name ?? "" }
+
+    /// The working directory's last component ("~" for home), "" when unknown.
+    var folder: String {
+        guard !currentPath.isEmpty else { return "" }
+        let abbreviated = abbreviateHomePath(currentPath)
+        if abbreviated == "~" || abbreviated == "/" { return abbreviated }
+        return (currentPath as NSString).lastPathComponent
+    }
+
+    /// What the window *is*, for the sidebar. tmux's automatic names are just
+    /// the foreground command — "zsh", or Claude Code's "2.1.284" — which
+    /// says nothing, so: an agent's task summary (or session name); a shell's
+    /// folder; another program's name. A name the user chose always wins.
+    var title: String {
+        if let agent = primaryAgent {
+            if !agent.summary.isEmpty { return agent.summary }
+            if !agent.name.isEmpty { return agent.name }
+        }
+        guard hasAutomaticName else { return name }
+        let cmd = command.lowercased()
+        if cmd.isEmpty || AgentPane.shells.contains(cmd) || AgentKind(command: cmd) != nil {
+            return folder.isEmpty ? (name.isEmpty ? "window \(index)" : name) : folder
+        }
+        return command
+    }
+
+    /// The folder, shown dimmed beside the title when the title isn't already it.
+    var titleDetail: String {
+        let t = title
+        return (folder.isEmpty || t == folder) ? "" : folder
+    }
+
+    /// Whether `name` is tmux's automatic one (the command, a shell, a
+    /// version number) rather than something the user set.
+    private var hasAutomaticName: Bool {
+        let n = name.lowercased()
+        return n.isEmpty || n == command.lowercased() || AgentPane.shells.contains(n)
+            || AgentKind(command: n) != nil
+    }
+
+    /// An SF Symbol for what's running: agents, shells, editors, builds…
+    var symbol: String {
+        if primaryAgent != nil { return "sparkle" }
+        let cmd = command.lowercased()
+        switch cmd {
+        case "", _ where AgentPane.shells.contains(cmd): return "terminal"
+        case "vim", "nvim", "vi", "hx", "helix", "emacs", "nano", "micro", "kak": return "square.and.pencil"
+        case "ssh", "mosh", "mosh-client", "et": return "network"
+        case "make", "cargo", "swift", "swift-build", "xcodebuild", "npm", "pnpm", "yarn", "bun",
+             "go", "gradle", "mvn", "just", "bazel", "cmake", "ninja", "mix", "rake": return "hammer"
+        case "node", "python", "python3", "ruby", "deno", "elixir", "iex", "irb", "beam.smp",
+             "rails", "php", "java": return "chevron.left.forwardslash.chevron.right"
+        case "docker", "lazydocker", "docker-compose", "kubectl", "k9s": return "shippingbox"
+        case "htop", "btop", "top", "glances", "bottom", "btm": return "gauge.with.dots.needle.33percent"
+        case "git", "lazygit", "tig", "gitui": return "arrow.triangle.branch"
+        case "psql", "mysql", "redis-cli", "sqlite3", "pgcli", "mongosh": return "cylinder"
+        case "less", "man", "tail", "more", "bat": return "doc.text"
+        default: return "terminal"
+        }
+    }
 }
 
 /// Collapse the common macOS/Linux home prefixes to "~" — we can't know a
@@ -106,12 +179,14 @@ final class TmuxStore {
     @ObservationIgnored private var unseenFinished: Set<String> = []
 
     /// The window this host is currently showing (nil when the selection is on
-    /// another host). Set by the sidebar; viewing a window marks its agents seen.
+    /// another host). Set by the sidebar. A finished agent is marked seen when
+    /// you *leave* its window, not when you arrive — so clicking a "just
+    /// finished" agent doesn't yank it into another lane under your pointer.
     var viewedWindowID: String? {
         didSet {
-            guard viewedWindowID != oldValue, let viewedWindowID else { return }
+            guard viewedWindowID != oldValue, let left = oldValue else { return }
             let seen = rawWindows.values.joined()
-                .filter { $0.id == viewedWindowID }
+                .filter { $0.id == left }
                 .flatMap { $0.agents.map(\.id) }
             if !unseenFinished.isDisjoint(with: seen) {
                 unseenFinished.subtract(seen)

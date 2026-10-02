@@ -48,8 +48,10 @@ struct TerminalDetailView: View {
                             fontSize: fontSize,
                             isVisible: host.id == selection?.hostID
                                 && sessionID == selectedSession?.id
-                                && showsTerminal
+                                && showsTerminal,
+                            themeID: ThemeStore.shared.selectedID
                         )
+                        .equatable()
                     }
                 }
             }
@@ -120,10 +122,21 @@ struct TerminalDetailView: View {
 
 /// A single warm terminal surface. Stays mounted while its session is activated,
 /// so it never re-attaches; only its visibility changes when switching.
-private struct WarmSurface: View {
+///
+/// Equatable on what actually changes it — so the detail view re-rendering
+/// for every tmux update (agent activity ticks it many times a second) no
+/// longer rebuilds every warm terminal's view each time.
+private struct WarmSurface: View, Equatable {
     let workspace: any TerminalWorkspace
     let fontSize: Double?
     let isVisible: Bool
+    /// The theme in force, so a theme change still reaches the surface.
+    let themeID: String
+
+    static func == (a: WarmSurface, b: WarmSurface) -> Bool {
+        a.workspace === b.workspace && a.fontSize == b.fontSize
+            && a.isVisible == b.isVisible && a.themeID == b.themeID
+    }
 
     var body: some View {
         workspace.makeSurfaceView(fontSize: fontSize, isVisible: isVisible)

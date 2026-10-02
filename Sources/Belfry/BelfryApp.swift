@@ -47,6 +47,13 @@ struct BelfryApp: App {
                 .frame(minWidth: 900, minHeight: 560)
         }
         .windowStyle(.titleBar)
+        // Every agent on every host at once, Activity Monitor style.
+        Window("Agents", id: "agents") {
+            AgentsTableView(model: model)
+                .frame(minWidth: 720, minHeight: 240)
+        }
+        .defaultSize(width: 1100, height: 420)
+        .keyboardShortcut("a", modifiers: [.command, .shift])
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Updater.controller?.checkForUpdates(nil) }
@@ -65,6 +72,8 @@ struct BelfryApp: App {
             // with the same name next to it. With a web tab showing, the size
             // keys zoom the page instead of the terminal font.
             CommandGroup(after: .sidebar) {
+                ThemeCommands()
+                Divider()
                 Button("Increase Font Size") { adjustSize(+1) }
                     .keyboardShortcut("+", modifiers: .command)
                 // Also catch ⌘= (the +/= key without Shift), which doesn't match "+".
@@ -79,6 +88,28 @@ struct BelfryApp: App {
     }
 }
 
+/// View ▸ Theme: the built-in coding themes (dark, then light) plus "Match
+/// Ghostty". Command content never re-evaluates for @Observable state, so the
+/// checkmark binds through @AppStorage on the same defaults key `ThemeStore`
+/// persists to; choosing routes through `ThemeStore.select`, which recolours
+/// the chrome and every live terminal.
+struct ThemeCommands: View {
+    @AppStorage("colorTheme") private var selected = ThemeStore.ghosttyID
+
+    var body: some View {
+        Picker("Theme", selection: Binding(get: { selected }, set: { ThemeStore.shared.select($0) })) {
+            Text("Match Ghostty").tag(ThemeStore.ghosttyID)
+            Divider()
+            Section("Dark") {
+                ForEach(ThemeStore.darkThemes) { Text($0.name).tag($0.id) }
+            }
+            Section("Light") {
+                ForEach(ThemeStore.lightThemes) { Text($0.name).tag($0.id) }
+            }
+        }
+    }
+}
+
 // AppModel now lives in BelfryKit (shared with iOS); the macOS-specific
 // pieces — ssh-alias add-host and quit-time server cleanup — are extensions
 // in MacTransport.swift.
@@ -86,6 +117,7 @@ struct BelfryApp: App {
 struct RootView: View {
     let model: AppModel
     @State private var selection: WindowSelection?
+    @Environment(\.openWindow) private var openWindow
     @State private var prompt: SidebarPrompt?
     @State private var confirm: ConfirmAction?
     /// The last readout that resolved, kept so a host dropping its connection
@@ -156,10 +188,24 @@ struct RootView: View {
         return nil
     }
 
-    var body: some View {
-        NavigationSplitView {
+    @ViewBuilder private var sidebar: some View {
+        #if DEBUG
+        if SidebarLab.isOn {
+            MacSidebarView(snapshot: SidebarSamples.snapshot(), selection: $selection)
+                .modifier(MacSidebarChrome())
+        } else {
             SessionTreeView(hosts: model.hosts, model: model,
                             selection: $selection, prompt: $prompt, confirm: $confirm)
+        }
+        #else
+        SessionTreeView(hosts: model.hosts, model: model,
+                        selection: $selection, prompt: $prompt, confirm: $confirm)
+        #endif
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            sidebar
                 .navigationSplitViewColumnWidth(min: 220, ideal: 250)
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { addMenu }
@@ -167,7 +213,14 @@ struct RootView: View {
         } detail: {
             TerminalDetailView(hosts: model.hosts, selection: selection, fontSize: model.fontSize,
                                browserTabs: model.browserTabs)
-                .background(AppTheme.windowBackground)
+                // The terminal's colour runs up under the toolbar, so the
+                // toolbar, the tmux status line and the sidebar seam meet on
+                // one surface rather than three slightly different ones.
+                .background(AppTheme.windowBackground.ignoresSafeArea())
+                // No toolbar background of its own: each column's colour shows
+                // through (a painted toolbar put the terminal's colour above
+                // the sidebar too).
+                .toolbarBackground(.hidden, for: .windowToolbar)
                 .terminalAttachments(hosts: model.hosts, selection: selection)
                 // The file pane rides in an inspector so the warm terminal
                 // surfaces stay mounted beside it, never re-parented.
@@ -187,6 +240,14 @@ struct RootView: View {
                         }
                         .disabled(selection == nil)
                         .help("Open a browser tab in this session (⌘T)")
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            openWindow(id: "agents")
+                        } label: {
+                            Label("Agents", systemImage: "list.bullet.rectangle")
+                        }
+                        .help("Every agent at a glance (⇧⌘A)")
                     }
                     ToolbarItem(placement: .primaryAction) {
                         TransfersButton(center: model.transferCenter)
@@ -231,6 +292,15 @@ struct RootView: View {
         // exists (macOS 15+; on 14 the two coexist).
         .navigationTitle(windowTitle)
         .hidingToolbarTitle()
+        // The Agents window asks to jump to an agent: select its window here,
+        // focus its pane, and bring this window forward.
+        .onChange(of: model.jumpRequest, initial: true) { _, request in
+            guard let request else { return }
+            model.jumpRequest = nil
+            selection = request.selection   // carries the pane; the sidebar focuses it
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: "main")
+        }
         .onChange(of: readout, initial: true) { _, new in
             if let new, let sel = selection {
                 lastReadout = CachedReadout(selection: sel, readout: new)
@@ -243,7 +313,11 @@ struct RootView: View {
             NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
         }
         .task {
+            #if DEBUG
+            if !SidebarLab.isOn { model.startAll() }
+            #else
             model.startAll()
+            #endif
             installCloseTabKeyMonitor()
         }
         .sheet(item: $prompt) { prompt in
@@ -518,6 +592,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Self.rotateQuitLogIfNeeded()
         qlog("didFinishLaunching")
+        #if DEBUG
+        DebugSnapshot.install()
+        #endif
         // Safety net: a SwiftUI single-`Window` scene doesn't always terminate the
         // app when its window closes, which can strand Belfry "still running" so the
         // user force-quits it — and a Dock force-quit force-kills the whole coalition,
