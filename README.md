@@ -1,6 +1,6 @@
 # Belfry
 
-A native macOS + iPadOS front-end for **real tmux**: a sidebar of hosts → sessions → windows you click to switch, with the selected session's live terminal filling the rest. Works against your local tmux server and remote machines over SSH — and shows live **Claude Code status badges** so you can see at a glance which session is working and which one is waiting on you.
+A native macOS + iPadOS front-end for **tmux**: a sidebar of hosts → sessions → windows you click to switch, with the selected session's live terminal filling the rest. Works against your local tmux server and remote machines over SSH — and shows live **Claude Code status badges** so you can see at a glance which session is working and which one is waiting on you.
 
 Your sessions live in tmux, exactly as they always have. Belfry attaches; it never owns them. Quit the app, kill the network, switch devices — everything keeps running.
 
