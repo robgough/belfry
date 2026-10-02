@@ -1,0 +1,44 @@
+name: Publish Sparkle appcast
+
+# Signs and publishes the appcast for an already-released version — the same
+# step the macOS release runs at its end, on its own for catch-ups and
+# retries. Needs SPARKLE_ED_PRIVATE_KEY on the release environment
+# (scripts/upload_sparkle_key.sh).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version (YYYY.MM.N)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  publish:
+    runs-on: macos-26
+    environment: release
+    if: github.actor == github.repository_owner
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Sign and publish
+        env:
+          VERSION: ${{ inputs.version }}
+          SPARKLE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ -n "$SPARKLE_KEY" ] || { echo "::error::No SPARKLE_ED_PRIVATE_KEY secret on the release environment — run scripts/upload_sparkle_key.sh once from Terminal.app."; exit 1; }
+          KEY_FILE="$RUNNER_TEMP/sparkle_ed.key"
+          printf '%s' "$SPARKLE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -B main origin/main
+          SPARKLE_ED_KEY_FILE="$KEY_FILE" scripts/publish_appcast.sh "$VERSION"
+          rm -f "$KEY_FILE"
