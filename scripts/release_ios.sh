@@ -64,13 +64,18 @@ xcodegen generate
 ARCHIVE=".build/ios/Belfry-$VERSION.xcarchive"
 rm -rf "$ARCHIVE"
 
+# Archive UNSIGNED; the export below signs for distribution. Signing the
+# archive itself used automatic *development* signing, which on a fresh CI
+# runner (no local certificate) minted a new Apple Development certificate
+# every run until the account hit Apple's certificate limit and archiving
+# failed. The app has no entitlements, so nothing is lost by signing late.
 echo "› archiving $VERSION ($BUILD_NUM)…"
 xcodebuild archive \
     -project BelfryiOS.xcodeproj -scheme BelfryiOS \
     -destination 'generic/platform=iOS' \
     -archivePath "$ARCHIVE" \
-    -allowProvisioningUpdates ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
     DEVELOPMENT_TEAM="$TEAM_ID" \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUM"
 

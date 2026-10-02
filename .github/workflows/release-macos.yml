@@ -25,6 +25,8 @@ on:
 # Least privilege: tag the commit and create the release. Nothing else.
 permissions:
   contents: write
+  # Request the Pages rebuild that publishes the signed appcast.
+  pages: write
 
 # Two releases at once would race on the version counter and the tag.
 concurrency:
@@ -227,8 +229,38 @@ jobs:
           git -C "$TAP" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BELFRY_TAP="$TAP" scripts/update_cask.sh "$VERSION"
 
-      - name: Say what's left to do
+      # Sign and publish the Sparkle appcast, so existing installs update
+      # themselves. Needs the EdDSA key as the SPARKLE_ED_PRIVATE_KEY secret on
+      # the release environment (scripts/upload_sparkle_key.sh puts it there);
+      # without it this skips and the summary says to run it locally.
+      - name: Publish the Sparkle appcast
+        id: appcast
         if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          SPARKLE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SPARKLE_KEY" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "No SPARKLE_ED_PRIVATE_KEY secret — leaving the appcast for a local run."
+            exit 0
+          fi
+          KEY_FILE="$RUNNER_TEMP/sparkle_ed.key"
+          printf '%s' "$SPARKLE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Start from the latest main: the feed commit goes on top of it.
+          git fetch -q origin main
+          git checkout -q -B main origin/main
+          SPARKLE_ED_KEY_FILE="$KEY_FILE" scripts/publish_appcast.sh "$VERSION"
+          rm -f "$KEY_FILE"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+      - name: Say what's left to do
+        if: ${{ !inputs.dry_run && steps.appcast.outputs.published != 'true' }}
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
@@ -253,4 +285,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "${KEYCHAIN:-}" 2>/dev/null || true
-          rm -f "$RUNNER_TEMP/asc.p8" "$RUNNER_TEMP/cert.p12" || true
+          rm -f "$RUNNER_TEMP/asc.p8" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/sparkle_ed.key" || true

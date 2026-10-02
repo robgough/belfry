@@ -5,10 +5,10 @@
 #
 # This is the step that actually ships to existing installs: Sparkle reads
 # docs/appcast.xml from belfry.robgough.net (GitHub Pages), and only trusts
-# entries EdDSA-signed by the key in the login keychain. That key deliberately
-# lives here and not in GitHub Actions — CI can build, sign, notarize and
-# publish a release, but it cannot make every install auto-update itself.
-# See RELEASING.md.
+# entries EdDSA-signed by Belfry's key. Locally the key comes from the login
+# keychain; in CI (the macOS release workflow) it comes from the
+# SPARKLE_ED_PRIVATE_KEY secret on the main-only `release` environment, passed
+# in as a file via SPARKLE_ED_KEY_FILE. See RELEASING.md.
 #
 # Needs the exact bytes users will download, so the signature and length
 # describe the published asset: uses ./Belfry-<version>.zip when it's already
@@ -39,14 +39,16 @@ SPARKLE_BIN=".build/sparkle-tools/bin"
 if [ ! -x "$SPARKLE_BIN/generate_appcast" ]; then
     echo "› fetching Sparkle tools…"
     mkdir -p .build/sparkle-tools
-    curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/2.9.3/Sparkle-2.9.3.tar.xz" \
+    curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz" \
         | tar -xJ -C .build/sparkle-tools
 fi
 
 STAGE=".build/appcast-stage"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
 cp "$ZIP" "$STAGE/"
-"$SPARKLE_BIN/generate_appcast" "$STAGE" \
+KEY_ARGS=()
+[ -n "${SPARKLE_ED_KEY_FILE:-}" ] && KEY_ARGS=(--ed-key-file "$SPARKLE_ED_KEY_FILE")
+"$SPARKLE_BIN/generate_appcast" ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} "$STAGE" \
     --download-url-prefix "https://github.com/robgough/belfry/releases/download/v$VERSION/" \
     --link "https://belfry.robgough.net" \
     --full-release-notes-url "https://github.com/robgough/belfry/releases" \

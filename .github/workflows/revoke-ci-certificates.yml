@@ -1,0 +1,58 @@
+name: Revoke CI signing certificates
+
+# Release runs used to mint a new Apple Development certificate on every CI
+# runner (archives were signed with automatic development signing) until the
+# account hit Apple's certificate limit. This lists — and, with dry_run off,
+# revokes — development certificates created through the App Store Connect
+# API, i.e. by CI. Certificates your own Macs created through Xcode are named
+# after the machine and are never touched; distribution certificates neither.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List only (no revocation)"
+        type: boolean
+        default: true
+
+jobs:
+  revoke:
+    runs-on: macos-26
+    environment: release
+    if: github.actor == github.repository_owner
+    steps:
+      - name: List / revoke API-created development certificates
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --break-system-packages pyjwt cryptography
+          python3 - <<'PY'
+          import base64, json, os, time, urllib.request
+          import jwt
+          key = base64.b64decode(os.environ["ASC_KEY_P8_BASE64"]).decode()
+          now = int(time.time())
+          token = jwt.encode({"iss": os.environ["ASC_ISSUER_ID"], "iat": now, "exp": now + 900,
+                              "aud": "appstoreconnect-v1"}, key, algorithm="ES256",
+                             headers={"kid": os.environ["ASC_KEY_ID"], "typ": "JWT"})
+          def call(method, path):
+              req = urllib.request.Request("https://api.appstoreconnect.apple.com" + path, method=method,
+                                           headers={"Authorization": f"Bearer {token}"})
+              with urllib.request.urlopen(req) as r:
+                  body = r.read()
+                  return json.loads(body) if body else None
+          certs = call("GET", "/v1/certificates?limit=200")["data"]
+          dry = os.environ.get("DRY_RUN", "true") == "true"
+          print(f"{len(certs)} certificates on the account")
+          for c in certs:
+              a = c["attributes"]
+              name = a.get("name") or a.get("displayName") or ""
+              kind = a.get("certificateType", "")
+              ci = kind in ("DEVELOPMENT", "IOS_DEVELOPMENT") and "Created via API" in name
+              print(f"  {'REVOKE' if ci else 'keep  '}  {kind:<22} {name}  (expires {a.get('expirationDate','?')[:10]})")
+              if ci and not dry:
+                  call("DELETE", f"/v1/certificates/{c['id']}")
+          print("dry run — nothing revoked" if dry else "done")
+          PY

@@ -40,28 +40,28 @@ isn't on GitHub, on purpose.
    Gatekeeper accepts the result, tags `vX.Y.Z`, creates the GitHub release with
    the changelog section as notes, and bumps the Homebrew cask.
 
-3. **Publish the appcast** from your Mac — the run's summary spells this out:
+3. **The appcast publishes itself** once the Sparkle key is on the `release`
+   environment as `SPARKLE_ED_PRIVATE_KEY` (one-time setup: run
+   `./scripts/upload_sparkle_key.sh` from Terminal.app). The workflow signs the
+   exact asset it published, pushes `docs/appcast.xml` and asks Pages to
+   rebuild — existing installs see the update within a minute or two.
+
+   Without that secret, the run's summary says to finish by hand from
+   **Terminal.app** (signing then reads the key from the login keychain, which
+   needs the GUI session — over ssh it fails with "lack of private EdDSA key"):
 
    ```sh
    git pull && ./scripts/publish_appcast.sh X.Y.Z
    ```
 
-   It fetches the exact asset CI published (so the signature and length describe
-   the bytes users download), EdDSA-signs it, pushes `docs/appcast.xml`, and asks
-   Pages for a build. Until this runs, Sparkle users stay on the old version;
-   Homebrew users already have the new one.
+### The Sparkle key in CI
 
-   Run it from **Terminal.app**, not a Belfry/ssh session: signing reads the key
-   from the login keychain, which needs the GUI (Aqua) security session. Over
-   ssh it fails with "lack of private EdDSA key" — loudly, without pushing.
-
-### Why the Sparkle key isn't in CI
-
-Anyone with repo write can already change the appcast; what stops them shipping
-a malicious auto-update to every install is not being able to *sign* it. Putting
-the EdDSA key in Actions secrets collapses those two defences into one, since any
-workflow change could read it. The Developer ID identity is a lesser risk — it
-signs what Gatekeeper accepts, but nothing auto-installs — so it lives in CI.
+The EdDSA key is what lets a release auto-install on every Mac running
+Belfry, so it's guarded: it lives only on the `release` environment, which
+only `main` can use, and the release jobs only run for the repo owner. The
+remaining exposure is the owner's GitHub account itself — keep 2FA on it.
+(Earlier releases kept the key off GitHub entirely and signed by hand; the
+manual path above still works.)
 
 ### Secrets the workflow needs
 
