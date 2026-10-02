@@ -38,14 +38,26 @@ struct TerminalDockLayer: View {
                 }
                 .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
             }
-            if showsArrows {
-                arrowPad
-                    .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
+            // The persistent part — the control row, plus the arrow keys while
+            // they're on — reserves its height at the bottom of the terminal,
+            // so it sits *under* the terminal rather than over its last lines.
+            // (The palette is a transient pop-over and may float over it.)
+            VStack(alignment: .trailing, spacing: 10) {
+                if showsArrows {
+                    arrowPad
+                        .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
+                }
+                dock
             }
-            dock
+            .background(GeometryReader { geo in
+                Color.clear
+                    .onAppear { reserve(geo.size.height) }
+                    .onChange(of: geo.size.height) { _, height in reserve(height) }
+            })
         }
         .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(.bottom, Self.bottomPadding)
+        .onDisappear { workspace.terminalView.dockReservedHeight = 0 }
         .animation(.spring(duration: 0.25), value: showsPalette)
         .animation(.spring(duration: 0.25), value: showsArrows)
         .sheet(isPresented: $showsSettings) {
@@ -63,6 +75,15 @@ struct TerminalDockLayer: View {
         }
         .onAppear { installPreviewHook() }
         .onChange(of: context?.currentDirectory) { installPreviewHook() }
+    }
+
+    /// Gap under the dock, and between it and the terminal above.
+    private static let bottomPadding: CGFloat = 8
+    private static let gapAbove: CGFloat = 6
+
+    /// Tell the terminal how much room the dock takes at the bottom.
+    private func reserve(_ height: CGFloat) {
+        workspace.terminalView.dockReservedHeight = height + Self.bottomPadding + Self.gapAbove
     }
 
     /// Long-press on a token in terminal output → parse → preview. The hook

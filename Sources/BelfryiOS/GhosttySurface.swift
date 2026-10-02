@@ -245,6 +245,29 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
     var containerBottomConstraint: NSLayoutConstraint?
     private(set) var keyboardOverlap: CGFloat = 0
 
+    /// Height the keyboard dock reserves at the bottom (its control row, and
+    /// the arrow keys when shown). Added on top of the keyboard overlap so the
+    /// terminal always stops *above* the dock — with the keyboard up or down —
+    /// instead of the dock covering its last lines (the tmux status line and
+    /// the prompt). Set by the dock as it measures itself; 0 without one.
+    var dockReservedHeight: CGFloat = 0 {
+        didSet {
+            guard oldValue != dockReservedHeight else { return }
+            applyBottomInset(duration: 0.2)
+        }
+    }
+
+    /// The bottom pin's offset: keyboard overlap plus the dock's reservation.
+    var bottomInset: CGFloat { keyboardOverlap + dockReservedHeight }
+
+    private func applyBottomInset(duration: TimeInterval) {
+        containerBottomConstraint?.constant = -bottomInset
+        guard let superview else { return }
+        UIView.animate(withDuration: duration) {
+            superview.layoutIfNeeded()
+        }
+    }
+
     private func installKeyboardObservers() {
         for name in [UIResponder.keyboardWillChangeFrameNotification,
                      UIResponder.keyboardWillHideNotification] {
@@ -271,12 +294,9 @@ final class BelfryGhosttySurfaceView: SurfaceContainerView {
         }
         guard overlap != keyboardOverlap else { return }
         keyboardOverlap = overlap
-        containerBottomConstraint?.constant = -overlap
         let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey]
             as? TimeInterval ?? 0.25
-        UIView.animate(withDuration: duration) {
-            superview.layoutIfNeeded()
-        }
+        applyBottomInset(duration: duration)
     }
 
     // MARK: Touch scrollback
@@ -384,7 +404,7 @@ struct GhosttySurfaceContainer: UIViewRepresentable {
             // geometry" above): the container spans under the keyboard, the
             // terminal stops above it.
             let bottom = terminalView.bottomAnchor.constraint(
-                equalTo: container.bottomAnchor, constant: -terminalView.keyboardOverlap)
+                equalTo: container.bottomAnchor, constant: -terminalView.bottomInset)
             terminalView.containerBottomConstraint = bottom
             NSLayoutConstraint.activate([
                 terminalView.topAnchor.constraint(equalTo: container.topAnchor),
