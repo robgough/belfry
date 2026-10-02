@@ -66,8 +66,11 @@ signs what Gatekeeper accepts, but nothing auto-installs — so it lives in CI.
 ### Secrets the workflow needs
 
 Repo → Settings → Secrets and variables → Actions. Also create a `release`
-environment and add yourself as a required reviewer, so a run can't spend the
-signing identity without an explicit approval.
+environment limited to the `main` branch (Deployment branches → Selected
+branches → `main`), so a workflow on any other branch can't reach the signing
+identity. There's no manual approval step: the release jobs only run for the
+repo owner (`if: github.actor == github.repository_owner`), and only accounts
+with write access can trigger them at all.
 
 | Secret | What it is |
 |---|---|

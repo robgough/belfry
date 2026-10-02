@@ -50,6 +50,10 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 90
     environment: release
+    # Only the repo owner can cut a release (the environment's manual
+    # approval was dropped; it is also limited to main). Anyone else's run
+    # is skipped before it reaches the signing secrets.
+    if: github.actor == github.repository_owner
     steps:
       # Full history: the build number is `git rev-list --count HEAD` and the
       # version counter reads v* tags. A shallow clone gets both wrong.
