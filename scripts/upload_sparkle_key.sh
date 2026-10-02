@@ -17,9 +17,20 @@ if [ ! -x "$SPARKLE_BIN/generate_keys" ]; then
         | tar -xJ -C .build/sparkle-tools
 fi
 
-TMP="$(mktemp -t belfry-sparkle-key)"
-trap 'rm -f "$TMP"' EXIT
-"$SPARKLE_BIN/generate_keys" -x "$TMP" >/dev/null
-[ -s "$TMP" ] || { echo "✗ couldn't export the key (is it in this login keychain?)" >&2; exit 1; }
-gh secret set SPARKLE_ED_PRIVATE_KEY --env release --repo robgough/belfry < "$TMP"
-echo "✓ SPARKLE_ED_PRIVATE_KEY set on the release environment — releases now publish the appcast themselves"
+# Fail loudly: any error says which step broke (the first version exited
+# silently under `set -e`).
+trap 'echo "✗ failed at line $LINENO — nothing was uploaded" >&2' ERR
+
+# generate_keys -x refuses to overwrite an existing file, so export into a
+# fresh path inside a private temp directory (not a pre-created temp file).
+DIR="$(mktemp -d -t belfry-sparkle)"
+trap 'rm -rf "$DIR"' EXIT
+KEY="$DIR/sparkle_ed.key"
+
+echo "› exporting the Sparkle key from your login keychain (allow access if macOS asks)…"
+"$SPARKLE_BIN/generate_keys" -x "$KEY"
+[ -s "$KEY" ] || { echo "✗ no key was exported — is Belfry's Sparkle key in this login keychain?" >&2; exit 1; }
+
+echo "› uploading it as SPARKLE_ED_PRIVATE_KEY on the release environment…"
+gh secret set SPARKLE_ED_PRIVATE_KEY --env release --repo robgough/belfry < "$KEY"
+echo "✓ done — releases now publish the Sparkle appcast themselves"
