@@ -37,8 +37,11 @@ isn't on GitHub, on purpose.
    the workflow, the scripts, or the toolchain.
 
    It runs the tests, builds universal, signs, notarizes, staples, asserts
-   Gatekeeper accepts the result, tags `vX.Y.Z`, creates the GitHub release with
-   the changelog section as notes, and bumps the Homebrew cask.
+   Gatekeeper accepts the result, wraps it in a signed + notarized DMG
+   (`scripts/make_dmg.sh`), tags `vX.Y.Z`, creates the GitHub release (zip +
+   DMG, changelog section as notes), and bumps the Homebrew cask. Sparkle and
+   Homebrew keep using the zip; the DMG is for first-time downloads. For an
+   older release, **Attach DMG to a release** adds one after the fact.
 
 3. **The appcast publishes itself** once the Sparkle key is on the `release`
    environment as `SPARKLE_ED_PRIVATE_KEY` (one-time setup: run

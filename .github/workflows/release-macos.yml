@@ -175,11 +175,22 @@ jobs:
           xcrun stapler validate "$RUNNER_TEMP/verify/Belfry.app"
           lipo -archs "$RUNNER_TEMP/verify/Belfry.app/Contents/MacOS/Belfry"
 
+      # The friendlier first download (drag to Applications), wrapped around
+      # the same stapled app. Runs on dry runs too, so it stays exercised.
+      - name: Build the DMG
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          NOTARY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+        run: scripts/make_dmg.sh "$VERSION"
+
       - name: Upload the build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Belfry-${{ steps.v.outputs.version }}
-          path: Belfry-${{ steps.v.outputs.version }}.zip
+          path: |
+            Belfry-${{ steps.v.outputs.version }}.zip
+            Belfry-${{ steps.v.outputs.version }}.dmg
           if-no-files-found: error
 
       # A joint release dispatched in parallel can race this push with the iOS
@@ -211,7 +222,7 @@ jobs:
         run: |
           set -euo pipefail
           scripts/release_notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
-          gh release create "v$VERSION" "Belfry-$VERSION.zip" \
+          gh release create "v$VERSION" "Belfry-$VERSION.zip" "Belfry-$VERSION.dmg" \
               --title "Belfry $VERSION" \
               --notes-file "$RUNNER_TEMP/notes.md"
 
