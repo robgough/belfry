@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 // MARK: - Snapshot (plain values: what the sidebar shows)
@@ -107,20 +106,38 @@ struct SidebarHoverAction: Identifiable {
 extension EnvironmentValues {
     /// Render every row in its hovered state (render tests only).
     @Entry var sidebarForceHover = false
+    /// Called whenever a row is tapped (even one already selected) — the
+    /// iPhone uses it to show the terminal column.
+    @Entry var sidebarActivate: () -> Void = {}
 }
 
 // MARK: - Metrics (one grid for everything)
 
 private enum SB {
+    #if os(iOS)
+    // Touch: 44pt rows and body-sized text.
+    static let rowHeight: CGFloat = 44
+    static let icon: CGFloat = 24
+    static let primary: CGFloat = 16
+    static let secondary: CGFloat = 13
+    static let symbol: CGFloat = 16
+    static let label: CGFloat = 13
+    #else
+    static let rowHeight: CGFloat = 28
+    /// Icon column width; every row's icon sits in it.
+    static let icon: CGFloat = 18
+    /// Primary text, secondary text, row symbols, section labels.
+    static let primary: CGFloat = 13
+    static let secondary: CGFloat = 11
+    static let symbol: CGFloat = 12
+    static let label: CGFloat = 11
+    #endif
     /// Row inset from the sidebar's edges.
     static let edge: CGFloat = 8
     /// Padding inside a row, before the icon column.
     static let pad: CGFloat = 8
-    /// Icon column width; every row's icon sits in it.
-    static let icon: CGFloat = 18
     /// Icon → text.
     static let gap: CGFloat = 8
-    static let rowHeight: CGFloat = 28
     /// Nested windows of a multi-window session.
     static let indent: CGFloat = 16
     static let radius: CGFloat = 6
@@ -141,8 +158,10 @@ struct MacSidebarView: View {
     var menu: (SidebarMenuTarget) -> AnyView = { _ in AnyView(EmptyView()) }
     var newSession: (String) -> Void = { _ in }
     var actions = SidebarRowActions()
+    @Environment(\.sidebarActivate) private var activate
 
     var body: some View {
+        #if os(macOS)
         // The scroll view runs up under the (transparent) toolbar, and the
         // toolbar's height is added as padding SwiftUI knows about. Left to
         // AppKit, the scroll view got an automatic content inset SwiftUI
@@ -166,6 +185,11 @@ struct MacSidebarView: View {
         #if DEBUG
         .onPreferenceChange(SidebarLayoutKey.self) { SidebarLayoutKey.last = $0 }
         #endif
+        #else
+        // iOS: the navigation bar's insets just work (and keep the large
+        // title collapsing as the list scrolls).
+        ScrollView { content }
+        #endif
     }
 
     /// The rows, without the scroll view (which off-screen rendering can't draw).
@@ -181,7 +205,7 @@ struct MacSidebarView: View {
                                    actions: [SidebarHoverAction(symbol: "pin.slash", help: "Unpin") {
                                        actions.unpin(pin.id)
                                    }])
-                                .onTapGesture { if let target = pin.target { selection = target } }
+                                .onTapGesture { if let target = pin.target { selection = target; activate() } }
                                 .contextMenu { menu(.pin(pin.id)) }
                         }
                     }
@@ -196,7 +220,7 @@ struct MacSidebarView: View {
                             LaneLabel(lane: lane.lane, isFirst: lane.id == snapshot.lanes.first?.id)
                             ForEach(lane.agents) { agent in
                                 AgentRow2(agent: agent, isSelected: selection == agent.selection)
-                                    .onTapGesture { selection = agent.selection }
+                                    .onTapGesture { selection = agent.selection; activate() }
                                     .contextMenu { menu(.agent(agent.id)) }
                             }
                         }
@@ -223,7 +247,7 @@ struct MacSidebarView: View {
         if !snapshot.collapsed.contains(key) {
             if host.sessions.isEmpty {
                 Text(host.status.isLive ? "No sessions" : "Not connected")
-                    .font(.system(size: 11))
+                    .font(.system(size: SB.secondary))
                     .foregroundStyle(.tertiary)
                     .padding(.leading, SB.textLeading)
                     .frame(height: SB.rowHeight)
@@ -266,7 +290,7 @@ struct MacSidebarView: View {
                    isSelected: selection?.sameWindow(as: target) == true && selection?.paneID == nil,
                    actions: windowActions(host: host, session: session, window: window,
                                           standsForSession: standsForSession, pinned: pinned))
-            .onTapGesture { selection = target }
+            .onTapGesture { selection = target; activate() }
             .contextMenu {
                 menu(.window(hostID: host.id, sessionID: session.id, windowID: window.id,
                              standsForSession: standsForSession))
@@ -338,7 +362,7 @@ private struct HoverActionButtons: View {
 
     private func icon(_ symbol: String) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: SB.label, weight: .medium))
             .frame(width: 22, height: 20)
             .contentShape(Rectangle())
     }
@@ -392,7 +416,7 @@ private struct SectionLabel: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: SB.label, weight: .semibold))
                 .foregroundStyle(tint)
                 .lineLimit(1)
             if let status {
@@ -434,7 +458,7 @@ private struct LaneLabel: View {
     var isFirst = false
     var body: some View {
         Text(lane.nativeTitle)
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: SB.label, weight: .medium))
             .foregroundStyle(lane == .quiet ? AnyShapeStyle(.secondary) : AnyShapeStyle(lane.tint))
             .padding(.leading, SB.textLeading)
             .padding(.top, isFirst ? 0 : 10)
@@ -462,7 +486,7 @@ private struct AgentRow2: View {
                 // width); the live line with the uncommitted +/− beside it.
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(title)
-                        .font(.system(size: 13, weight: emphasised ? .semibold : .medium))
+                        .font(.system(size: SB.primary, weight: emphasised ? .semibold : .medium))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     if let since = pane.since {
@@ -471,7 +495,7 @@ private struct AgentRow2: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     secondLine
-                        .font(.system(size: 11))
+                        .font(.system(size: SB.secondary))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
@@ -564,11 +588,11 @@ private struct SessionRow: View {
     var body: some View {
         HStack(spacing: SB.gap) {
             Image(systemName: "rectangle.stack")
-                .font(.system(size: 12))
+                .font(.system(size: SB.symbol))
                 .foregroundStyle(.secondary)
                 .frame(width: SB.icon)
             Text(session.name)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: SB.primary, weight: .medium))
                 .lineLimit(1)
             if session.isPinned {
                 Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(.tertiary)
@@ -612,7 +636,7 @@ private struct WindowRow2: View {
     var body: some View {
         HStack(spacing: SB.gap) {
             Image(systemName: window.symbol)
-                .font(.system(size: 12))
+                .font(.system(size: SB.symbol))
                 .foregroundStyle(isSelected ? AnyShapeStyle(AppTheme.accent) : AnyShapeStyle(.secondary))
                 .frame(width: SB.icon)
             titleText
@@ -660,9 +684,9 @@ private struct WindowRow2: View {
             main = window.title
             detail = window.titleDetail
         }
-        return Text(main).font(.system(size: 13, weight: window.isActive || standsForSession ? .medium : .regular))
+        return Text(main).font(.system(size: SB.primary, weight: window.isActive || standsForSession ? .medium : .regular))
             .foregroundStyle(window.isActive || standsForSession || isSelected ? .primary : .secondary)
-            + Text(detail.isEmpty ? "" : "  \(detail)").font(.system(size: 11)).foregroundStyle(.tertiary)
+            + Text(detail.isEmpty ? "" : "  \(detail)").font(.system(size: SB.secondary)).foregroundStyle(.tertiary)
     }
 }
 
@@ -679,11 +703,11 @@ private struct PinRow: View {
     var body: some View {
         HStack(spacing: SB.gap) {
             Image(systemName: pin.isWindow ? "macwindow" : "rectangle.stack")
-                .font(.system(size: 12))
+                .font(.system(size: SB.symbol))
                 .foregroundStyle(isSelected ? AnyShapeStyle(AppTheme.accent) : AnyShapeStyle(.secondary))
                 .frame(width: SB.icon)
-            (Text(pin.title).font(.system(size: 13, weight: .medium))
-             + Text("  \(pin.detail)").font(.system(size: 11)).foregroundStyle(.tertiary))
+            (Text(pin.title).font(.system(size: SB.primary, weight: .medium))
+             + Text("  \(pin.detail)").font(.system(size: SB.secondary)).foregroundStyle(.tertiary))
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
@@ -708,10 +732,8 @@ private struct PinRow: View {
         .opacity(pin.isLive ? 1 : 0.5)
     }
 }
-#endif
 
-
-#if os(macOS) && DEBUG
+#if DEBUG
 /// Debug builds: sample sidebar data (render tests and the sidebar lab).
 @MainActor
 enum SidebarSamples {
@@ -809,7 +831,6 @@ enum SidebarLab {
 }
 #endif
 
-#if os(macOS)
 // MARK: - Container (live data → snapshot, menus, keys)
 
 /// Builds `SidebarSnapshot` from the live models and hosts `MacSidebarView`:
@@ -1004,4 +1025,3 @@ struct MacSidebarContainer: View {
         }
     }
 }
-#endif

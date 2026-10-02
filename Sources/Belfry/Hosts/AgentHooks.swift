@@ -26,7 +26,7 @@ enum AgentHooks {
     /// commands and the script header carry `belfry-status-v<N>`; `check()`
     /// reports an older (or bare) marker as installed-but-outdated, and
     /// `HostModel` silently reinstalls to roll the change out.
-    static let version = 5
+    static let version = 6
     static var versionedMarker: String { "\(marker)-v\(version)" }
 
     private struct HookError: Error { let message: String }
@@ -138,9 +138,38 @@ enum AgentHooks {
         let claudeInstalled = claudeText?.contains(marker) ?? false
         let codexInstalled = codexText?.contains(marker) ?? false
         let installed = claudeInstalled || codexInstalled
-        let current = (!claudeInstalled || (claudeText?.contains(versionedMarker) ?? false))
-            && (scriptText?.contains(versionedMarker) ?? false)
-        return .status(installed: installed, current: current)
+        return .status(installed: installed,
+                       current: isCurrent(claude: claudeText, script: scriptText, claudeInstalled: claudeInstalled))
+    }
+
+    /// Versions named by `belfry-status-v<N>` markers in `text` (a bare,
+    /// unversioned marker counts as 0).
+    static func markerVersions(in text: String) -> Set<Int> {
+        var versions = Set<Int>()
+        var rest = Substring(text)
+        while let range = rest.range(of: marker) {
+            rest = rest[range.upperBound...]
+            if rest.hasPrefix("-v") {
+                let digits = rest.dropFirst(2).prefix { $0.isNumber }
+                versions.insert(Int(digits) ?? 0)
+            } else {
+                versions.insert(0)
+            }
+        }
+        return versions
+    }
+
+    /// Whether the installed hooks need no reinstall. Never downgrade: hooks
+    /// from a *newer* Belfry are left alone (an older copy reinstalling its
+    /// own version over them broke the newer one's status). A mix of versions
+    /// — what that downgrade left behind — gets one clean reinstall.
+    static func isCurrent(claude: String?, script: String?, claudeInstalled: Bool) -> Bool {
+        let claudeVersions = markerVersions(in: claude ?? "")
+        let scriptVersions = markerVersions(in: script ?? "")
+        let all = claudeVersions.union(scriptVersions)
+        if let newest = all.max(), newest > version { return true }
+        let claudeOK = !claudeInstalled || claudeVersions == [version]
+        return claudeOK && scriptVersions.contains(version)
     }
 
     /// Install the script, merge Claude's hooks (idempotent; backs up first),

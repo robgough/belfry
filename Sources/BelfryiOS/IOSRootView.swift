@@ -19,6 +19,10 @@ struct IOSRootView: View {
     // Start with the sidebar shown: prominentDetail otherwise opens on an
     // empty detail pane with the tree hidden behind the toggle button.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// Which column a stacked (iPhone) split view shows. Set to the detail on
+    /// every sidebar tap, so the custom sidebar pushes the terminal the way a
+    /// native list selection would — including re-tapping the open window.
+    @State private var compactColumn: NavigationSplitViewColumn = .sidebar
     @State private var showsFilePane = false
     /// Saved commands (shortcut palette) — app-lifetime, persisted.
     @State private var shortcutStore = ShortcutStore()
@@ -34,9 +38,9 @@ struct IOSRootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SessionTreeView(hosts: model.hosts, model: model,
-                            selection: $selection, prompt: $prompt, confirm: $confirm)
+        NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $compactColumn) {
+            sidebar
+                .environment(\.sidebarActivate, { compactColumn = .detail })
                 .navigationTitle("Belfry")
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { optionsMenu }
@@ -99,6 +103,9 @@ struct IOSRootView: View {
         .preferredColorScheme(AppTheme.colorScheme)
         .task {
             Haptics.prewarm()
+            #if DEBUG
+            if SidebarLab.isOn { return }
+            #endif
             model.startAll()
             #if DEBUG
             // Harness hook: BELFRY_TEST_AUTOSELECT=1 selects the first window
@@ -177,6 +184,22 @@ struct IOSRootView: View {
         }
     }
 
+    @ViewBuilder private var sidebar: some View {
+        #if DEBUG
+        // BELFRY_SIDEBAR_LAB=1: sample data, no connections (layout work).
+        if SidebarLab.isOn {
+            MacSidebarView(snapshot: SidebarSamples.snapshot(), selection: $selection)
+                .modifier(MacSidebarChrome())
+        } else {
+            SessionTreeView(hosts: model.hosts, model: model,
+                            selection: $selection, prompt: $prompt, confirm: $confirm)
+        }
+        #else
+        SessionTreeView(hosts: model.hosts, model: model,
+                        selection: $selection, prompt: $prompt, confirm: $confirm)
+        #endif
+    }
+
     /// The warm workspace behind the current selection (for the keyboard button).
     private var selectedWorkspace: (any TerminalWorkspace)? {
         guard let sel = selection,
@@ -233,6 +256,17 @@ struct IOSRootView: View {
                         Text("Overlay Sidebar").tag(SidebarLayout.overlay)
                     }
                 }
+            }
+            Section("Theme") {
+                Picker(selection: Binding(get: { ThemeStore.shared.selectedID },
+                                          set: { ThemeStore.shared.select($0) })) {
+                    Text("Match Ghostty").tag(ThemeStore.ghosttyID)
+                    ForEach(ThemeStore.darkThemes) { Text($0.name).tag($0.id) }
+                    ForEach(ThemeStore.lightThemes) { Text($0.name).tag($0.id) }
+                } label: {
+                    Label("Theme — \(ThemeStore.shared.selectedName)", systemImage: "paintpalette")
+                }
+                .pickerStyle(.menu)
             }
             Section("Connections") {
                 Picker(selection: $keepAliveSeconds) {

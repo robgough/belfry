@@ -2,6 +2,26 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.2] — 2026-10-02
+
+### Fixed
+
+- **Agents stuck on "Working" after they'd finished.** An older copy of
+  Belfry could "upgrade" a machine's hooks back to its own version, leaving a
+  mix that never reported the finish. Belfry now never downgrades hooks,
+  cleans up a mixed install, and trusts the finished signal if it sees one.
+- After you approve a permission, the activity line shows the tool that's
+  running instead of still saying "Approve …".
+
+### Changed
+
+- **iPhone and iPad get the new sidebar** — agents grouped by status with
+  soft status tints, windows titled by what they are, folding sessions — at
+  touch size. On iPad with a trackpad, rows show the same hover actions as
+  the Mac; on touch they're in the long-press menu. Tapping a row on iPhone
+  always opens its terminal.
+- **Themes on iOS**: the options menu (⋯) has the same 20 built-in themes.
+
 ## [2026.10.1] — 2026-10-02
 
 ### Added

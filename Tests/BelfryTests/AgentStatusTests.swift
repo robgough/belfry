@@ -161,3 +161,28 @@ struct WindowTitleTests {
         #expect(w.symbol == "sparkle")
     }
 }
+
+struct HookVersionTests {
+    @Test func readsMarkerVersions() {
+        #expect(AgentHooks.markerVersions(in: "a # belfry-status-v3 b # belfry-status-v6 c # belfry-status") == [3, 6, 0])
+    }
+
+    @Test func mixedOrOlderHooksNeedReinstallButNewerAreLeftAlone() {
+        let v = AgentHooks.version
+        let script = "# belfry-status-v\(v)"
+        #expect(AgentHooks.isCurrent(claude: "# belfry-status-v\(v)", script: script, claudeInstalled: true))
+        #expect(!AgentHooks.isCurrent(claude: "# belfry-status-v3 # belfry-status-v\(v)", script: script, claudeInstalled: true))
+        #expect(!AgentHooks.isCurrent(claude: "# belfry-status-v3", script: "# belfry-status-v3", claudeInstalled: true))
+        #expect(AgentHooks.isCurrent(claude: "# belfry-status-v\(v + 1)", script: "# belfry-status-v\(v + 1)", claudeInstalled: true))
+    }
+}
+
+struct LegacyMismatchTests {
+    @Test func finishedLegacyStateBeatsStuckWorking() throws {
+        let raw = AgentPane.Raw(paneID: "%1", windowID: "@1", sessionID: "$1", isActivePane: true,
+                                command: "2.1.286", currentPath: "/x", title: "✳ Task",
+                                kind: "claude", state: "working", timestamp: "", activity: "", summary: "",
+                                name: "", diff: "", legacyClaudeState: "idle", legacyClaudeTitle: "")
+        #expect(AgentPane.detect(raw)?.state == .idle)
+    }
+}

@@ -151,7 +151,9 @@ case $ev in
   PermissionRequest)
     st=waiting; act="Approve $(describe)" ;;
   PostToolUse|PostToolUseFailure)
-    st=working; keepact=1; ctx=1
+    # Re-describe the tool: after an approval the activity still read
+    # "Approve …" while the approved tool ran.
+    st=working; act=$(human); ctx=1
     editlike && diff=1
     # A foreground sub-agent's tool call returns when it finishes; a background
     # one returns at launch (it's cleared when the turn ends with nothing left).

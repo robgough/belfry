@@ -105,11 +105,6 @@ struct SessionTreeView: View {
         // ⌘1–⌘9 jump to the Nth agent, in the Agents section's order.
         .background { agentShortcuts }
         #endif
-        #if os(iOS)
-        .scrollContentBackground(.hidden)
-        .background(AppTheme.sidebarBackground.ignoresSafeArea())
-        .environment(\.defaultMinListRowHeight, Self.minRowHeight)
-        #endif
         // tmux is authoritative for the active window: switching windows with
         // tmux keys (prefix-n, status-bar clicks) moves the active flag on the
         // next store refresh, and the sidebar selection follows instead of going
@@ -154,19 +149,12 @@ struct SessionTreeView: View {
     /// collapsed NavigationSplitView (iPhone) only a native selection change
     /// pushes the detail column — a custom tap gesture updates state the
     /// split view can't see, leaving the terminal unreachable.
-    @ViewBuilder private var platformList: some View {
-        #if os(iOS)
-        // Plain (not sidebar/grouped) so there's no built-in section margin: the
-        // whole tree's leading position is ours to set via listRowInsets
-        // (SidebarRowChrome / SidebarHeaderChrome), and headers line up with rows.
-        List(selection: $selection) { treeSections }
-            .listStyle(.plain)
-            .listSectionSpacing(.compact)
-        #else
-        // The Mac sidebar (see MacSidebar.swift).
+    /// Both platforms draw the custom sidebar (MacSidebar.swift); iOS gets
+    /// touch metrics there, and the iPhone shows the terminal on tap via the
+    /// `sidebarActivate` environment hook its root view supplies.
+    private var platformList: some View {
         MacSidebarContainer(hosts: hosts, model: model, selection: $selection,
                             prompt: $prompt, confirm: $confirm, justMoved: justMoved)
-        #endif
     }
 
     @ViewBuilder private var treeSections: some View {

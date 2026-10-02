@@ -404,12 +404,22 @@ struct AgentRow: View {
 }
 
 /// "+84 −12" — uncommitted insertions/deletions in the agent's working tree.
+/// Size for the small numeric readouts (diff, elapsed): 11pt on the Mac,
+/// a touch larger on iOS where the sidebar uses body-sized text.
+private var readoutSize: CGFloat {
+    #if os(iOS)
+    13
+    #else
+    11
+    #endif
+}
+
 struct DiffStatText: View {
     let diff: DiffStat
     var body: some View {
         (Text("+\(diff.added)").foregroundStyle(AppTheme.statusGood)
          + Text(" −\(diff.removed)").foregroundStyle(AppTheme.statusBad))
-            .font(.system(size: 11, weight: .medium).monospacedDigit())
+            .font(.system(size: readoutSize, weight: .medium).monospacedDigit())
             .hoverHint("Uncommitted: \(diff.added) added, \(diff.removed) removed across "
                        + "\(diff.files) file\(diff.files == 1 ? "" : "s")")
     }
@@ -423,7 +433,7 @@ struct ElapsedText: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             Text(Self.format(context.date.timeIntervalSince(since)))
-                .font(.system(size: 11).monospacedDigit())
+                .font(.system(size: readoutSize).monospacedDigit())
                 .foregroundStyle(.tertiary)
         }
         .hoverHint("In this state since \(since.formatted(date: .omitted, time: .shortened))")

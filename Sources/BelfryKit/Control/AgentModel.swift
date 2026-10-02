@@ -215,6 +215,14 @@ struct AgentPane: Identifiable, Hashable {
             optionsTrusted = false
         }
         if kind != nil, state == nil { state = .running }
+        // Current hooks write the pane state and the legacy window state
+        // together, so they only disagree when an older Belfry's hooks are
+        // (also) installed — those write just the legacy one. Busy-vs-done
+        // disagreement on the active pane: the legacy write is the newer news.
+        if kind == .claude, raw.isActivePane, let current = state, current.isBusy,
+           let legacy = AgentState(hookValue: raw.legacyClaudeState), !legacy.isBusy {
+            state = legacy
+        }
         if kind == nil, commandKind == .claude, let legacy = AgentState(hookValue: raw.legacyClaudeState) {
             kind = .claude
             state = legacy
