@@ -46,7 +46,7 @@ struct PromptSheet: View {
             AddHostForm(model: model)
         case .newSession(let host):
             TextPromptForm(title: "New Session", field: "Session name", initial: "", confirmLabel: "Create") { name in
-                host.client.newSession(name: name)
+                model.createSession(on: host, name: name)
             }
         case .renameSession(let host, let session):
             TextPromptForm(title: "Rename Session", field: "Name", initial: session.name, confirmLabel: "Rename") { name in

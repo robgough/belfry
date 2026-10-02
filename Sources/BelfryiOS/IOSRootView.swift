@@ -169,6 +169,14 @@ struct IOSRootView: View {
             }
             #endif
         }
+        // A new session (or other jump request): select its window and, on
+        // iPhone, show the terminal.
+        .onChange(of: model.jumpRequest, initial: true) { _, request in
+            guard let request else { return }
+            model.jumpRequest = nil
+            selection = request.selection
+            compactColumn = .detail
+        }
         .sheet(item: $prompt) { prompt in
             PromptSheet(prompt: prompt, model: model)
         }

@@ -21,14 +21,40 @@ final class AppModel {
     /// warm while the user works elsewhere.
     let browserTabs = BrowserTabStore()
 
-    /// A request, from outside the main window (the Agents window), to show a
-    /// window and focus one of its panes. The main window applies it to its
+    /// A request, from outside the sidebar's own selection (the Agents
+    /// window, a newly created session), to show a window and focus one of
+    /// its panes. The main window applies it to its
     /// selection and clears it.
     var jumpRequest: JumpRequest?
 
     struct JumpRequest: Equatable {
         let selection: WindowSelection
         let paneID: String?
+    }
+
+    /// Create a session on `host` and switch to it once tmux reports it —
+    /// a new session should be where you land, not something added quietly
+    /// behind the one you're in. Matches the newcomer by id (sessions that
+    /// didn't exist before), preferring the requested name.
+    func createSession(on host: HostModel, name: String) {
+        let before = Set(host.store.sessions.map(\.id))
+        host.client.newSession(name: name)
+        // tmux rewrites "." and ":" in session names to "_".
+        let expected = name.replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: ".", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        Task { @MainActor [weak self] in
+            for _ in 0..<40 {   // up to ~4s for the store to refresh
+                try? await Task.sleep(for: .milliseconds(100))
+                let fresh = host.store.sessions.filter { !before.contains($0.id) }
+                guard let session = fresh.first(where: { $0.name == expected }) ?? fresh.first,
+                      let window = session.windows.first(where: \.isActive) ?? session.windows.first
+                else { continue }
+                self?.jumpRequest = JumpRequest(
+                    selection: WindowSelection(hostID: host.id, windowID: window.id), paneID: nil)
+                return
+            }
+        }
     }
 
     /// Sessions/windows pinned to the top of the sidebar. New pins append;
