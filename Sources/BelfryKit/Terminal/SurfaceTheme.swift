@@ -52,8 +52,7 @@ enum SurfaceTheme {
     private static func hex(_ value: UInt32) -> String { String(format: "#%06X", value) }
 
     private static func writeSnippet(id: String, resolved: ResolvedTheme) -> String? {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let base = AppSupport.directory
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let dir = base.appendingPathComponent("Belfry", isDirectory: true)
         let url = dir.appendingPathComponent("ghostty-theme-\(id).conf")

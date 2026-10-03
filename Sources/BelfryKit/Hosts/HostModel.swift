@@ -304,7 +304,7 @@ final class HostModel: Identifiable {
 
     /// Check once automatically after the first successful connect.
     private func checkHooksIfNeeded() {
-        guard !didCheckHooks, supportsHooksManagement else { return }
+        guard !didCheckHooks, supportsHooksManagement, !AppSupport.isDemo else { return }
         didCheckHooks = true
         checkHooks()
     }

@@ -21,8 +21,7 @@ struct SavedHost: Codable, Hashable {
 /// executable, which has no bundle identifier.
 enum HostPersistence {
     private static func appSupportFile(_ folder: String) -> URL {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let base = AppSupport.directory
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base
             .appendingPathComponent(folder, isDirectory: true)

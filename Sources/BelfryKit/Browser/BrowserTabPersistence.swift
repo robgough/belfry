@@ -26,8 +26,7 @@ struct BrowserTabPersistence {
     let fileURL: URL
 
     init(directory: URL? = nil) {
-        let base = directory ?? (FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let base = directory ?? (AppSupport.directory
             ?? URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("Library/Application Support"))
             .appendingPathComponent("Belfry", isDirectory: true)

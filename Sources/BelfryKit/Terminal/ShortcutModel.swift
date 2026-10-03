@@ -152,8 +152,7 @@ final class ShortcutStore {
     }
 
     private static func defaultURL() -> URL {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let base = AppSupport.directory
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("Belfry/shortcuts.json")
     }

@@ -12,6 +12,17 @@ enum DebugSnapshot {
     static let notification = Notification.Name("net.robgough.belfry.debug.snapshot")
 
     static func install() {
+        // BELFRY_WINDOW_SIZE=1600x944: size the main window (screenshots).
+        if let spec = ProcessInfo.processInfo.environment["BELFRY_WINDOW_SIZE"] {
+            let parts = spec.split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }) else { return }
+                    window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+                    window.center()
+                }
+            }
+        }
         DistributedNotificationCenter.default().addObserver(
             forName: notification, object: nil, queue: .main
         ) { _ in

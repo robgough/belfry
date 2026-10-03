@@ -315,6 +315,20 @@ struct RootView: View {
         .task {
             #if DEBUG
             if !SidebarLab.isOn { model.startAll() }
+            // BELFRY_DEMO_SELECT=<session>: select that session's active window
+            // once it appears (staged screenshots).
+            if let name = ProcessInfo.processInfo.environment["BELFRY_DEMO_SELECT"] {
+                for _ in 0..<100 {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    if let host = model.hosts.first,
+                       let session = host.store.sessions.first(where: { $0.name == name }),
+                       let window = session.windows.first(where: \.isActive) ?? session.windows.first {
+                        model.jumpRequest = AppModel.JumpRequest(
+                            selection: WindowSelection(hostID: host.id, windowID: window.id), paneID: nil)
+                        break
+                    }
+                }
+            }
             #else
             model.startAll()
             #endif

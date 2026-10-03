@@ -26,8 +26,7 @@ struct PinnedItem: Codable, Hashable, Identifiable {
 /// SPM executable has no bundle identifier for UserDefaults.
 enum PinPersistence {
     private static var fileURL: URL {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let base = AppSupport.directory
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base
             .appendingPathComponent("Belfry", isDirectory: true)
