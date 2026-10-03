@@ -2,6 +2,22 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.3] — 2026-10-03
+
+### Fixed
+
+- **New sessions open straight away.** Creating a session now switches to
+  it (on iPhone, straight into its terminal) instead of adding it to the
+  sidebar and leaving you where you were.
+- **iOS: the keyboard dock no longer covers the terminal.** The ctrl / esc /
+  tab bar (and the arrow keys when shown) now sits below the terminal
+  instead of over its last lines, so the tmux status line and your prompt
+  stay readable with the keyboard up or down.
+
+### Changed
+
+- Releases now ship a signed, notarized **DMG** alongside the zip.
+
 ## [2026.10.2] — 2026-10-02
 
 ### Fixed
