@@ -77,24 +77,25 @@ struct TmuxWindow: Identifiable, Hashable {
 
     /// What the window *is*, for the sidebar. tmux's automatic names are just
     /// the foreground command — "zsh", or Claude Code's "2.1.284" — which
-    /// says nothing, so: an agent's task summary (or session name); a shell's
-    /// folder; another program's name. A name the user chose always wins.
+    /// says nothing, so: a shell's or agent's folder (the project — the task
+    /// goes beside it, since a list of tasks alone doesn't say which project
+    /// is which); another program's name. A name the user chose always wins.
     var title: String {
-        if let agent = primaryAgent {
-            if !agent.summary.isEmpty { return agent.summary }
-            if !agent.name.isEmpty { return agent.name }
-        }
         guard hasAutomaticName else { return name }
         let cmd = command.lowercased()
-        if cmd.isEmpty || AgentPane.shells.contains(cmd) || AgentKind(command: cmd) != nil {
-            return folder.isEmpty ? (name.isEmpty ? "window \(index)" : name) : folder
+        if primaryAgent != nil || cmd.isEmpty || AgentPane.shells.contains(cmd) || AgentKind(command: cmd) != nil {
+            if !folder.isEmpty { return folder }
+            if let agent = primaryAgent, !agent.task.isEmpty { return agent.task }
+            return name.isEmpty ? "window \(index)" : name
         }
         return command
     }
 
-    /// The folder, shown dimmed beside the title when the title isn't already it.
+    /// Shown dimmed beside the title: an agent's task, else the folder when
+    /// the title isn't already it.
     var titleDetail: String {
         let t = title
+        if let agent = primaryAgent, !agent.task.isEmpty, agent.task != t { return agent.task }
         return (folder.isEmpty || t == folder) ? "" : folder
     }
 

@@ -157,7 +157,8 @@ struct WindowTitleTests {
                                 kind: "", state: "", timestamp: "", activity: "", summary: "",
                                 name: "", diff: "", legacyClaudeState: "", legacyClaudeTitle: "")
         w.agents = [try #require(AgentPane.detect(raw))]
-        #expect(w.title == "Fix the login flow")
+        #expect(w.title == "belfry")                    // the project leads
+        #expect(w.titleDetail == "Fix the login flow")  // the task beside it
         #expect(w.symbol == "sparkle")
     }
 }

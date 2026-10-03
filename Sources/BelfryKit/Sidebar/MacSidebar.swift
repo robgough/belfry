@@ -485,8 +485,7 @@ private struct AgentRow2: View {
                 // Title with the time beside it (short, so the task keeps the
                 // width); the live line with the uncommitted +/− beside it.
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(title)
-                        .font(.system(size: SB.primary, weight: emphasised ? .semibold : .medium))
+                    titleText
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     if let since = pane.since {
@@ -535,18 +534,25 @@ private struct AgentRow2: View {
 
     private var highlight: Color { attention ?? AppTheme.accent }
 
-    private var title: String {
-        if !pane.summary.isEmpty { return pane.summary }
-        if !pane.name.isEmpty { return pane.name }
-        return agent.folder.isEmpty ? pane.kind.displayName : agent.folder
+    /// The project first — a list of tasks alone doesn't say which project
+    /// is which: the folder (or session), with the branch dimmed beside it.
+    private var titleText: Text {
+        let project = agent.folder.isEmpty || agent.folder == "~" ? agent.sessionName : agent.folder
+        var text = Text(project).font(.system(size: SB.primary, weight: emphasised ? .semibold : .medium))
+        var rest: [String] = []
+        if !pane.branch.isEmpty, pane.branch != "HEAD" { rest.append("⎇ \(pane.branch)") }
+        if !agent.isLocal { rest.append(agent.hostName) }
+        if !rest.isEmpty {
+            text = text + Text("  " + rest.joined(separator: " · "))
+                .font(.system(size: SB.secondary)).foregroundStyle(.tertiary)
+        }
+        return text
     }
 
-    private var whereText: String {
-        var s = agent.folder
-        if !pane.branch.isEmpty, pane.branch != "HEAD" { s += " ⎇ \(pane.branch)" }
-        s += " · \(agent.sessionName)"
-        if !agent.isLocal { s += " · \(agent.hostName)" }
-        if pane.kind != .claude { s += " · \(pane.kind.displayName)" }
+    /// The task, with the harness when it isn't Claude Code.
+    private var taskText: String {
+        var s = pane.task.isEmpty ? pane.kind.displayName : pane.task
+        if pane.kind != .claude, !pane.task.isEmpty { s += " · \(pane.kind.displayName)" }
         return s
     }
 
@@ -560,7 +566,7 @@ private struct AgentRow2: View {
             return Text(pane.activity.isEmpty ? "Stopped on an error" : pane.activity)
                 .foregroundStyle(.primary)
         case .working, .background:
-            var text = Text(pane.activity.isEmpty ? "Working" : pane.activity).foregroundStyle(.secondary)
+            var text = Text(pane.activity.isEmpty ? taskText : pane.activity).foregroundStyle(.secondary)
             if pane.subagents > 0 {
                 text = text + Text(" · \(pane.subagents) agent\(pane.subagents == 1 ? "" : "s")")
                     .foregroundStyle(.tertiary)
@@ -568,9 +574,9 @@ private struct AgentRow2: View {
             return text
         case .idle where pane.finishedUnseen:
             return Text("Finished").foregroundStyle(.primary)
-                + Text(" · \(whereText)").foregroundStyle(.secondary)
+                + Text(" · \(taskText)").foregroundStyle(.secondary)
         case .idle, .running, .none:
-            return Text(whereText).foregroundStyle(.tertiary)
+            return Text(taskText).foregroundStyle(.tertiary)
         }
     }
 }

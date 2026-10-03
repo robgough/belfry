@@ -2,6 +2,16 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.4] — 2026-10-03
+
+### Changed
+
+- **Agents lead with their project.** Each agent in the sidebar now shows
+  its project (folder) and branch first, with what it's doing — or its task
+  — underneath, so a list of busy agents no longer leaves you guessing which
+  is which. Windows running an agent do the same: the project, with the task
+  dimmed beside it.
+
 ## [2026.10.3] — 2026-10-03
 
 ### Fixed

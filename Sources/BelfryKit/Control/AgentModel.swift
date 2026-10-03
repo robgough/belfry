@@ -131,6 +131,8 @@ struct AgentPane: Identifiable, Hashable {
     /// What the agent is working on: Claude Code's terminal-title summary when
     /// it has one, else the start of the latest prompt. "" when unknown.
     var summary: String
+    /// The task in a few words: the summary, else the agent's session name.
+    var task: String { summary.isEmpty ? name : summary }
     /// What it's doing right now ("Edit Foo.swift", "Approve Bash: npm test").
     var activity: String
     var diff: DiffStat?
