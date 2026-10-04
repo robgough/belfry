@@ -2,6 +2,35 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.6] — 2026-10-04
+
+### Fixed
+
+- **Terminals come back after a dropped connection.** When the link to a
+  remote host dropped (sleep, a network blip, "Shared connection … closed"),
+  the sidebar reconnected but the terminal stayed frozen on its last frame.
+  Terminals now reattach on their own as soon as the host is back.
+- **A session you killed while the iPhone or iPad app was in the background
+  no longer comes back** when you return to the app.
+- **iOS no longer gets stuck on "Connecting…"** when a connection stalls; it
+  gives up and retries.
+
+### Added
+
+- **A clear "disconnected" state over the terminal.** While a host is
+  unreachable the terminal dims and says what's happening, with a countdown
+  and **Retry Now**, the reason a connection failed with **Reconnect**, or
+  **Reattach** if just that terminal dropped.
+- **Waiting for network.** With no network, Belfry stops retrying (saving
+  battery) and reconnects the moment you're back online, or when you switch
+  between wifi and cellular. Macs also reconnect straight away on wake.
+
+### Changed
+
+- **Smarter retries**: Belfry now waits a little longer between each retry,
+  up to 30 seconds, and notices a connection that has silently died within
+  about half a minute, without any extra network traffic.
+
 ## [2026.10.5] — 2026-10-04
 
 ### Fixed
