@@ -2,6 +2,32 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.5] — 2026-10-04
+
+### Fixed
+
+- **Sub-agent counts are right.** Several sub-agents launched at once no
+  longer show as one, and a sub-agent waiting on its own background work no
+  longer drops off the count while it's still running.
+- **The sidebar shows each agent's sub-agents again**, one line each, as
+  Claude Code lists them.
+
+### Added
+
+- **Model and effort** for every agent and sub-agent — Claude Code, Codex,
+  OpenCode, pi and omp — in the sidebar and the Agents window ("Opus 5.5 ·
+  high", "Haiku 4.5"). OpenCode's sub-agents (its child sessions) now show
+  too.
+
+### Changed
+
+- **Agent rows get a line each**: the task, then where it is (project ⎇
+  branch, with the +/− changes), then what it's doing — so the project and
+  the activity no longer squeeze each other down to a few letters.
+- **The Agents window is a tree**: each agent's sub-agents fold underneath
+  it, in fewer, wider columns (with a Model column) that fit without
+  scrolling sideways.
+
 ## [2026.10.4] — 2026-10-03
 
 ### Changed

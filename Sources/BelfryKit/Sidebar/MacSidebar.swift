@@ -472,6 +472,7 @@ private struct LaneLabel: View {
 /// uncommitted +/− and time in state on the right. Agents that need you sit
 /// on a soft tint of their status colour.
 private struct AgentRow2: View {
+    static let maxTasks = 4
     let agent: SidebarSnapshot.Agent
     let isSelected: Bool
     @State private var isHovered = false
@@ -482,8 +483,7 @@ private struct AgentRow2: View {
             AgentBadge(state: pane.state, kind: pane.kind, title: pane.name, unseen: pane.finishedUnseen)
                 .frame(width: SB.icon, height: 17)
             VStack(alignment: .leading, spacing: 2) {
-                // Title with the time beside it (short, so the task keeps the
-                // width); the live line with the uncommitted +/− beside it.
+                // The task with the time beside it (short, so the task keeps the width).
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     titleText
                         .lineLimit(1)
@@ -492,14 +492,35 @@ private struct AgentRow2: View {
                         ElapsedText(since: since)
                     }
                 }
+                // Where it is (project ⎇ branch …) with the uncommitted +/−
+                // beside it, then — on its own line, so neither squeezes the
+                // other — what it's doing.
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    secondLine
+                    Text(whereText)
                         .font(.system(size: SB.secondary))
+                        .foregroundStyle(statusLine == nil ? .tertiary : .secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
                     if let diff = pane.diff, diff.added + diff.removed > 0 {
                         DiffStatText(diff: diff)
+                    }
+                }
+                if let statusLine {
+                    statusLine
+                        .font(.system(size: SB.secondary))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                // Its running sub-agents, one line each, as Claude Code lists them.
+                if pane.state.isBusy || pane.state == .waiting {
+                    ForEach(Array(pane.tasks.prefix(Self.maxTasks).enumerated()), id: \.offset) { _, task in
+                        SubagentLine(task: task, size: SB.secondary)
+                    }
+                    if pane.tasks.count > Self.maxTasks {
+                        Text("+\(pane.tasks.count - Self.maxTasks) more")
+                            .font(.system(size: SB.secondary))
+                            .foregroundStyle(.tertiary)
                     }
                 }
             }
@@ -534,49 +555,49 @@ private struct AgentRow2: View {
 
     private var highlight: Color { attention ?? AppTheme.accent }
 
-    /// The project first — a list of tasks alone doesn't say which project
-    /// is which: the folder (or session), with the branch dimmed beside it.
+    /// The task (Claude Code's summary or the prompt), else the session name.
     private var titleText: Text {
-        let project = agent.folder.isEmpty || agent.folder == "~" ? agent.sessionName : agent.folder
-        var text = Text(project).font(.system(size: SB.primary, weight: emphasised ? .semibold : .medium))
-        var rest: [String] = []
-        if !pane.branch.isEmpty, pane.branch != "HEAD" { rest.append("⎇ \(pane.branch)") }
-        if !agent.isLocal { rest.append(agent.hostName) }
-        if !rest.isEmpty {
-            text = text + Text("  " + rest.joined(separator: " · "))
-                .font(.system(size: SB.secondary)).foregroundStyle(.tertiary)
-        }
-        return text
+        Text(pane.task.isEmpty ? project : pane.task).font(.system(size: SB.primary, weight: emphasised ? .semibold : .medium))
     }
 
-    /// The task, with the harness when it isn't Claude Code.
-    private var taskText: String {
-        var s = pane.task.isEmpty ? pane.kind.displayName : pane.task
-        if pane.kind != .claude, !pane.task.isEmpty { s += " · \(pane.kind.displayName)" }
+    /// The folder, or the session when it's a bare home directory.
+    private var project: String {
+        agent.folder.isEmpty || agent.folder == "~" ? agent.sessionName : agent.folder
+    }
+
+    /// "belfry ⎇ main · session · host · Codex · Opus 5.5" — the project
+    /// first, so it's the last thing to truncate.
+    private var whereText: String {
+        var s = project
+        if !pane.branch.isEmpty, pane.branch != "HEAD" { s += " ⎇ \(pane.branch)" }
+        if agent.sessionName != project { s += " · \(agent.sessionName)" }
+        if !agent.isLocal { s += " · \(agent.hostName)" }
+        if pane.kind != .claude { s += " · \(pane.kind.displayName)" }
+        if !pane.model.isEmpty { s += " · \(ModelName.short(pane.model))" }
         return s
     }
 
-    private var secondLine: Text {
+    /// What it's doing, or nil for a quiet agent (its row is just where it is).
+    private var statusLine: Text? {
         switch pane.state {
         // On the attention tint, the text stays in the normal colour for
         // contrast; the tint and glyph carry the status.
         case .waiting:
             return Text(pane.activity.isEmpty ? "Waiting for you" : pane.activity).foregroundStyle(.primary)
         case .error:
-            return Text(pane.activity.isEmpty ? "Stopped on an error" : pane.activity)
-                .foregroundStyle(.primary)
+            return Text(pane.activity.isEmpty ? "Stopped on an error" : pane.activity).foregroundStyle(.primary)
         case .working, .background:
-            var text = Text(pane.activity.isEmpty ? taskText : pane.activity).foregroundStyle(.secondary)
-            if pane.subagents > 0 {
+            var text = Text(pane.activity.isEmpty ? "Working" : pane.activity).foregroundStyle(.secondary)
+            // The count only when there are no sub-agent lines to show it.
+            if pane.subagents > 0, pane.tasks.isEmpty {
                 text = text + Text(" · \(pane.subagents) agent\(pane.subagents == 1 ? "" : "s")")
                     .foregroundStyle(.tertiary)
             }
             return text
         case .idle where pane.finishedUnseen:
             return Text("Finished").foregroundStyle(.primary)
-                + Text(" · \(taskText)").foregroundStyle(.secondary)
         case .idle, .running, .none:
-            return Text(taskText).foregroundStyle(.tertiary)
+            return nil
         }
     }
 }
@@ -746,6 +767,7 @@ enum SidebarSamples {
     static func agent(_ pane: String, window: String, session: String, command: String = "2.1.286",
                        title: String, kind: String = "claude", state: String, activity: String = "",
                        branch: String = "main", diff: String = "", subagents: String = "",
+                       tasks: String = "", model: String = "claude-opus-5-5", effort: String = "high",
                        ago: TimeInterval = 120, path: String) -> AgentPane {
         var raw = AgentPane.Raw(
             paneID: pane, windowID: window, sessionID: session, isActivePane: true,
@@ -755,6 +777,9 @@ enum SidebarSamples {
             legacyClaudeState: "", legacyClaudeTitle: "")
         raw.branch = branch
         raw.subagents = subagents
+        raw.tasks = tasks
+        raw.model = model
+        raw.effort = effort
         return AgentPane.detect(raw)!
     }
 
@@ -776,6 +801,8 @@ enum SidebarSamples {
         finished.finishedUnseen = true
         let working = agent("%3", window: "@3", session: "$3", title: "Airship game with crew and dynamic systems",
                             state: "working", activity: "Editing display.rs", diff: "1990 159 12", subagents: "2",
+                            tasks: "a1b2 claude-haiku-4-5-20251001,- Explore: Map the crew systems"
+                                + "|c3d4 claude-opus-5-5,high general-purpose: Audit the save format",
                             ago: 900, path: "/Users/rob/code/airship2")
         let codex = agent("%4", window: "@4", session: "$4", command: "codex", title: "Codebase review",
                           kind: "codex", state: "working", activity: "Run the test suite", ago: 300,

@@ -48,10 +48,14 @@ enum AgentHookFiles {
 #   @agent_diff      "<insertions> <deletions> <files>" uncommitted vs HEAD in its cwd
 #   @agent_steps     tool calls so far this turn
 #   @agent_subagents sub-agents currently running
-#   @agent_tasks     running sub-agents, "type: description|type: description"
+#   @agent_tasks     running sub-agents, "<id> <model>,<effort> type: description|…"
+#                    (<id> "+" until started; model/effort "-" until known)
+#   @agent_tasks_gone recently stopped sub-agents, kept to relabel one that resumes
 #   @agent_mode      permission mode (default, acceptEdits, plan, auto, …)
 #   @agent_branch    git branch of its cwd
 #   @agent_context   tokens of context in use (Claude Code, from the transcript)
+#   @agent_model     model of its latest reply ("claude-opus-5-5")
+#   @agent_effort    thinking effort of its latest reply (low/medium/high/max)
 #
 # Usage: belfry-agent-hook <agent> <event>   with the event's JSON on stdin.
 # <event> is a Claude Code / Codex hook name (PreToolUse, Stop, …) or a generic
@@ -70,6 +74,12 @@ c=$(printf '%s' "$s" | head -c 65536 | tr '\n\r\t' '   ')
 # jget KEY — the (raw, still-escaped) string value of KEY in the event JSON.
 jget() {
   printf '%s' "$c" | sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p' | head -n 1
+}
+# jhead KEY — like jget, but only among the event's own fields, before any
+# tool input/response (whose arguments can carry a "model" of their own).
+jhead() {
+  h=${c%%'"tool_input"'*}; h=${h%%'"tool_response"'*}
+  printf '%s' "$h" | sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p' | head -n 1
 }
 # clean TEXT [MAX] — unescape the common JSON escapes, drop control characters,
 # backslashes and ';', squeeze spaces, cap the length (default 90 bytes).
@@ -121,14 +131,25 @@ editlike() {
   return 1
 }
 
-st= act= sum= diff= keepact= step= sub= reset= taskadd= taskdel= tasksclear= ctx=
+st= act= sum= diff= keepact= step= reset= taskadd= taskdel= tasksclear= ctx= seen= gone= lid= mdl= eff=
 # Sub-agent launches: the Task/Agent tool call carries the job's description
 # and type ("general-purpose: Audit the parser"), which SubagentStart doesn't.
 tn=$(jget tool_name)
 case $tn in Task|Agent|task|agent|spawn_agent)
   x=$(clean "$(jget description)" 70 | tr '|' '/'); y=$(jget subagent_type)
-  [ -n "$x" ] && task=$(clean "${y:-agent}: $x" 90 | tr '|' '/') ;;
+  [ -n "$x" ] && task=$(clean "${y:-general-purpose}: $x" 90 | tr '|' '/') ;;
 esac
+# Claude Code stamps agent_id (and agent_type) on every event that fires
+# inside a sub-agent, so any sign of life (re)lists it — including one that
+# resumes after its own background work woke it, which fires no SubagentStart.
+aid=$(jget agent_id | tr -cd 'A-Za-z0-9_-')
+tp=$(jget transcript_path)
+# Model and effort, when the event carries them: Claude Code's SessionStart,
+# every Codex hook (model), the OpenCode / pi / omp plugins (both; effort "-"
+# for "none"). On a sub-agent's event they're the sub-agent's (below).
+if [ -z "$aid" ]; then mdl=$(jhead model); eff=$(jhead effort); fi
+atype=$(clean "$(jget agent_type)" 40 | tr -d '|:')
+[ -n "$aid" ] && seen=1
 case $ev in
   SessionStart)
     case $(jget source) in
@@ -145,9 +166,11 @@ case $ev in
     st=working; act=$(human); step=1
     [ -n "$task" ] && taskadd=1 ;;
   SubagentStart)
-    sub=1; keepact=1 ;;
+    keepact=1 ;;
   SubagentStop)
-    sub=-1; keepact=1 ;;
+    # Also fires when a sub-agent pauses on background work of its own; if it
+    # resumes, its next tool call lists it again (description from @agent_tasks_gone).
+    keepact=1; seen=; [ -n "$aid" ] && gone=1 ;;
   PermissionRequest)
     st=waiting; act="Approve $(describe)" ;;
   PostToolUse|PostToolUseFailure)
@@ -156,13 +179,18 @@ case $ev in
     st=working; act=$(human); ctx=1
     editlike && diff=1
     # A foreground sub-agent's tool call returns when it finishes; a background
-    # one returns at launch (it's cleared when the turn ends with nothing left).
+    # one returns at launch, with its agent id — which pins the description to
+    # the right id when several of one type launched at once.
     if [ -n "$task" ]; then
-      case $(printf '%s' "$c" | tr -d ' ') in *'"run_in_background":true'*) ;; *) taskdel=1 ;; esac
+      case $(printf '%s' "$c" | tr -d ' ') in
+        *'"status":"async_launched"'*|*'"run_in_background":true'*)
+          lid=$(jget agentId | tr -cd 'A-Za-z0-9_-') ;;
+        *) taskdel=1 ;;
+      esac
     fi ;;
   Notification)
     case $(jget notification_type) in
-      idle_prompt) st=idle; act=- ;;       # ~60s after a turn ends (also heals a missed Stop)
+      idle_prompt) st=idle; act=-; tasksclear=1 ;;  # ~60s after a turn ends (also heals a missed Stop)
       permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input)
         st=waiting; act=$(clean "$(jget message)") ;;
       elicitation_complete|elicitation_response) st=working; keepact=1 ;;
@@ -175,7 +203,7 @@ case $ev in
       *'"background_tasks":['*) st=background; act="Background tasks running" ;;
       *) st=idle ;;
     esac
-    [ "$st" = idle ] && { act=-; sub=0; tasksclear=1; }
+    [ "$st" = idle ] && { act=-; tasksclear=1; }
     diff=1; ctx=1 ;;
   Interrupt)
     st=idle; act=Interrupted ;;
@@ -189,12 +217,16 @@ case $ev in
     st=waiting; x=$(clean "$(jget activity)"); act=${x:-"Needs your input"} ;;
   edited)
     diff=1 ;;
+  meta)          # a plugin reporting a model / effort change, nothing more
+    keepact=1 ;;
   SessionEnd|end)
     tmux set -pu -t "$p" @agent_kind \; set -pu -t "$p" @agent_state \; \
          set -pu -t "$p" @agent_ts \; set -pu -t "$p" @agent_activity \; \
          set -pu -t "$p" @agent_summary \; set -pu -t "$p" @agent_name \; \
          set -pu -t "$p" @agent_diff \; set -pu -t "$p" @agent_steps \; \
          set -pu -t "$p" @agent_subagents \; set -pu -t "$p" @agent_tasks \; \
+         set -pu -t "$p" @agent_tasks_gone \; set -pu -t "$p" @agent_model \; \
+         set -pu -t "$p" @agent_effort \; \
          set -pu -t "$p" @agent_mode \; set -pu -t "$p" @agent_branch \; \
          set -pu -t "$p" @agent_context >/dev/null 2>&1
     [ "$agent" = claude ] && tmux set -uw -t "$p" @claude_state \; set -uw -t "$p" @claude_title >/dev/null 2>&1
@@ -204,47 +236,155 @@ esac
 
 # Accumulate every option write into ONE tmux invocation (fewer forks on the
 # hot PreToolUse path, and the pane's options change together).
-# One read of the pane's current state, counters and sub-agent list (TAB-
-# separated; the list, last, is "type: description|type: description").
+#
+# Hooks for one pane run concurrently (parallel tool calls, sub-agents working
+# side by side), and below is a read-modify-write of its counters and sub-agent
+# list — so it holds a per-pane lock, or two launches at once leave one
+# unlisted. mkdir is the portable atomic test-and-set; a lock left by a killed
+# hook is broken after ~1s rather than wedging the agent.
+lk="${TMPDIR:-/tmp}/belfry-agent-hook-$(id -u)-$(printf '%s' "$TMUX" | cut -d, -f2)-${p#%}.lock"
+i=0
+until mkdir "$lk" 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -ge 50 ]; then rmdir "$lk" 2>/dev/null; mkdir "$lk" 2>/dev/null; break; fi
+  sleep 0.02 2>/dev/null || i=$((i + 10))
+done
+trap 'rmdir "$lk" 2>/dev/null' EXIT
+
+# One read of the pane's current state, counters and sub-agent lists (TAB-
+# separated; the running list, last, is "<id> type: description|…").
 tab=$(printf '\t')
-cur=$(tmux display -p -t "$p" "#{@agent_state}$tab#{@agent_steps}$tab#{@agent_subagents}$tab#{@agent_tasks}" 2>/dev/null)
+cur=$(tmux display -p -t "$p" "#{@agent_state}$tab#{@agent_steps}$tab#{@agent_subagents}$tab#{@agent_tasks_gone}$tab#{@agent_tasks}" 2>/dev/null)
 old=${cur%%"$tab"*}; rest=${cur#*"$tab"}; steps=${rest%%"$tab"*}; rest=${rest#*"$tab"}
-subs=${rest%%"$tab"*}; tasks=${rest#*"$tab"}
+subs=${rest%%"$tab"*}; rest=${rest#*"$tab"}; gonel=${rest%%"$tab"*}; tasks=${rest#*"$tab"}
 [ "$tasks" = "$rest" ] && tasks=
 case $steps in ''|*[!0-9]*) steps=0 ;; esac
-case $subs in ''|*[!0-9]*) subs=0 ;; esac
 
 set -- set -p -t "$p" @agent_kind "$agent"
 if [ -n "$st" ]; then
   [ "$old" = "$st" ] || set -- "$@" \; set -p -t "$p" @agent_ts "$(date +%s)"
   set -- "$@" \; set -p -t "$p" @agent_state "$st"
 fi
-# Counters: tool steps this turn, sub-agents in flight.
+# Tool steps this turn.
 if [ -n "$reset" ]; then steps=0; set -- "$@" \; set -p -t "$p" @agent_steps 0; fi
 if [ -n "$step" ]; then set -- "$@" \; set -p -t "$p" @agent_steps "$((steps + 1))"; fi
-case $sub in
-  1) set -- "$@" \; set -p -t "$p" @agent_subagents "$((subs + 1))" ;;
-  -1) [ "$subs" -gt 0 ] && subs=$((subs - 1)); set -- "$@" \; set -p -t "$p" @agent_subagents "$subs" ;;
-  0) set -- "$@" \; set -p -t "$p" @agent_subagents 0 ;;
-esac
-# Running sub-agents' descriptions.
+
+# Running sub-agents: "<id> <model>,<effort> <type>: <description>|…", where
+# <id> is Claude Code's agent_id, or "+" from the Agent tool call until
+# SubagentStart (which lacks the description) claims it, and <model> /
+# <effort> are "-" until known. @agent_subagents is the list's length.
+# @agent_tasks_gone keeps the last few stopped entries, for one that resumes.
+#
+# entry E — split an entry into $eid, $em ("model,effort") and $b ("type: description").
+entry() {
+  case $1 in *' '*) eid=${1%% *}; r=${1#* } ;; *) eid=:; r=$1 ;; esac
+  case $eid in *:*) eid=+; r=$1 ;; esac          # pre-v7: "type: description"
+  em=${r%% *}
+  case $em in *:*|"$r") em=-,-; b=$r ;; *,*) b=${r#* } ;; *) em=-,-; b=$r ;; esac
+}
+# safe TEXT — a model id or effort, reduced to characters that need no care.
+safe() { printf '%s' "$1" | sed -e 's/\[/-/g' -e 's#[^A-Za-z0-9._/-]##g' | cut -c1-64; }
+# A sub-agent's model and effort: what its own transcript's latest reply used,
+# else (before its first reply) the model it was launched with.
+sm= se= sb=
+if [ -n "$aid" ] && [ "$agent" != claude ]; then
+  sm=$(safe "$(jhead model)"); se=$(safe "$(jhead effort)")
+elif [ -n "$aid" ]; then
+  case $tp in */agent-"$aid".jsonl) sf=$tp ;; *) sf=${tp%.jsonl}/subagents/agent-$aid.jsonl ;; esac
+  if [ -f "$sf" ]; then
+    l=$(tail -n 30 "$sf" 2>/dev/null | grep '"message":{"model":"' | tail -n 1)
+    sm=$(safe "$(printf '%s' "$l" | sed -n 's/.*"message":{"model":"\([^"]*\)".*/\1/p')")
+    se=$(safe "$(printf '%s' "$l" | sed -n 's/.*"effort":"\([^"]*\)".*/\1/p')")
+  fi
+  # Claude Code's record of the launch: the exact type and description (so
+  # the entry needn't be guessed from the pending launches), and its model.
+  mj=$(head -c 8192 "${sf%.jsonl}.meta.json" 2>/dev/null | tr '\n\r\t' '   ')
+  if [ -n "$mj" ]; then
+    mget() { printf '%s' "$mj" | sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p' | head -n 1; }
+    x=$(clean "$(mget description)" 70 | tr '|' '/'); y=$(clean "$(mget agentType)" 40 | tr -d '|:')
+    [ -n "$x" ] && sb=$(clean "${y:-${atype:-general-purpose}}: $x" 90 | tr '|' '/')
+    [ -n "$sm" ] || sm=$(safe "$(mget model)")
+  fi
+fi
+# The Agent tool call's own model choice ("haiku"), for the pending entry.
+pm=; [ -n "$taskadd" ] && pm=$(safe "$(jget model)")
+# meta — $em with whatever $sm/$se now know.
+meta() { em="${sm:-${em%%,*}},${se:-${em#*,}}"; }
+
+nt= gl=$gonel present= pt= paired= dropped=
 if [ -n "$tasksclear" ]; then
-  [ -n "$tasks" ] && set -- "$@" \; set -pu -t "$p" @agent_tasks
-elif [ -n "$taskadd" ] || [ -n "$taskdel" ]; then
-  nt= found=
+  gl=
+else
   oifs=$IFS; IFS='|'
+  # Is the sub-agent listed yet, and is a launch of its type waiting for it?
+  # And a background launch whose id SubagentStart already paired, perhaps
+  # with a sibling's description: swap the descriptions back below.
+  ptm= lold= lhit= claimed=
   for e in $tasks; do
-    if [ "$e" = "$task" ] && [ -z "$found" ]; then found=1; [ -n "$taskadd" ] || continue; fi
-    nt=${nt:+$nt|}$e
+    entry "$e"
+    [ -n "$aid" ] && [ "$eid" = "$aid" ] && present=1
+    [ "$eid" = + ] && { [ "$b" = "$atype" ] || [ "${b%%:*}" = "$atype" ]; } && ptm=1
+    [ -n "$sb" ] && [ "$eid" = + ] && [ "$b" = "$sb" ] && ptm=1
+    [ -n "$lid" ] && [ "$eid" = "$lid" ] && { lhit=1; lold=$b; }
   done
+  if [ -n "$seen" ] && [ -z "$present" ]; then
+    if [ -n "$sb" ]; then pt=$sb                      # its own launch, exactly
+    elif [ -n "$ptm" ]; then pt=$atype; elif [ "$ev" = SubagentStart ]; then pt='*'; fi
+  fi
+  for e in $tasks; do
+    entry "$e"
+    if [ -n "$gone" ] && [ "$eid" = "$aid" ]; then gl="$eid $em $b${gl:+|$gl}"; continue; fi
+    if [ -n "$taskdel" ] && [ -z "$dropped" ] && [ "$eid" = + ] && [ "$b" = "$task" ]; then dropped=1; continue; fi
+    if [ -n "$lid" ]; then
+      if [ "$eid" = "$lid" ]; then
+        b=$task
+      elif [ -z "$claimed" ] && [ "$eid" = + ] && [ "$b" = "$task" ]; then
+        # This launch's own pending entry: it becomes the agent, or — when
+        # SubagentStart already listed the agent — goes. (The description
+        # that agent was wrongly given is fixed by its rightful owner's claim.)
+        claimed=1
+        if [ -n "$lhit" ]; then continue; fi
+        eid=$lid; lhit=1
+      fi
+    fi
+    if [ -n "$pt" ] && [ -z "$paired" ] && [ "$eid" = + ]; then
+      if [ -n "$sb" ]; then [ "$b" = "$sb" ] && { eid=$aid; paired=1; }
+      else case $b in $pt|$pt:*) eid=$aid; paired=1 ;; esac; fi
+    elif [ -n "$sb" ] && [ -n "$present" ] && [ "$eid" = + ] && [ "$b" = "$sb" ] && [ -z "$paired" ]; then
+      paired=1; continue   # a leftover of its launch: it's already listed
+    fi
+    if [ -n "$seen" ] && [ "$eid" = "$aid" ]; then meta; [ -n "$sb" ] && b=$sb; fi
+    nt="${nt:+$nt|}$eid $em $b"
+  done
+  if [ -n "$seen" ] && [ -z "$present" ] && [ -z "$paired" ]; then
+    eid=$aid em=-,- b=${atype:-agent}
+    for e in $gl; do entry "$e"; [ "$eid" = "$aid" ] && break; eid=$aid em=-,- b=${atype:-agent}; done
+    meta; [ -n "$sb" ] && b=$sb
+    nt="${nt:+$nt|}$aid $em $b"
+  fi
   IFS=$oifs
-  [ -n "$taskadd" ] && [ -z "$found" ] && nt=${nt:+$nt|}$task
+  [ -n "$lid" ] && [ -z "$lhit" ] && nt="${nt:+$nt|}$lid -,- $task"
+  [ -n "$taskadd" ] && nt="${nt:+$nt|}+ ${pm:--},- $task"
+  [ -n "$gone" ] && gl=$(printf '%s' "$gl" | cut -d'|' -f1-6)
+fi
+if [ "$nt" != "$tasks" ]; then
   if [ -n "$nt" ]; then set -- "$@" \; set -p -t "$p" @agent_tasks "$nt"
   else set -- "$@" \; set -pu -t "$p" @agent_tasks; fi
+fi
+n=0; oifs=$IFS; IFS='|'; for e in $nt; do n=$((n + 1)); done; IFS=$oifs
+[ "$n" = "$subs" ] || set -- "$@" \; set -p -t "$p" @agent_subagents "$n"
+if [ "$gl" != "$gonel" ]; then
+  if [ -n "$gl" ]; then set -- "$@" \; set -p -t "$p" @agent_tasks_gone "$gl"
+  else set -- "$@" \; set -pu -t "$p" @agent_tasks_gone; fi
 fi
 # Permission mode (default / acceptEdits / plan / auto / bypassPermissions).
 m=$(jget permission_mode)
 [ -n "$m" ] && set -- "$@" \; set -p -t "$p" @agent_mode "$m"
+mdl=$(safe "$mdl"); eff=$(safe "$eff")
+[ -n "$mdl" ] && set -- "$@" \; set -p -t "$p" @agent_model "$mdl"
+if [ "$eff" = - ]; then set -- "$@" \; set -pu -t "$p" @agent_effort
+elif [ -n "$eff" ]; then set -- "$@" \; set -p -t "$p" @agent_effort "$eff"
+fi
 if [ "$act" = - ]; then set -- "$@" \; set -pu -t "$p" @agent_activity
 elif [ -n "$act" ]; then set -- "$@" \; set -p -t "$p" @agent_activity "$act"
 elif [ -z "$keepact" ] && [ -n "$st" ]; then set -- "$@" \; set -pu -t "$p" @agent_activity
@@ -270,18 +410,42 @@ if [ "$agent" = claude ]; then
 fi
 
 tmux "$@" >/dev/null 2>&1
+rmdir "$lk" 2>/dev/null; trap - EXIT
 
 # Context in use: the latest main-thread token usage in the transcript
 # (input + cache reads + cache writes), off the hook's critical path.
-tp=$(jget transcript_path)
-if [ -n "$ctx" ] && [ -f "$tp" ]; then
+if [ "$agent" = claude ] && [ -n "$ctx" ] && [ -f "$tp" ]; then
   (
     u=$(tail -n 60 "$tp" 2>/dev/null | grep '"usage"' | grep -v '"isSidechain":true' | tail -n 1 | tr -d ' ')
     [ -n "$u" ] || exit 0
     n(){ printf '%s' "$u" | sed -n "s/.*\"$1\":\([0-9][0-9]*\).*/\1/p" | head -n 1; }
     a=$(n input_tokens); b=$(n cache_read_input_tokens); c2=$(n cache_creation_input_tokens)
-    tmux set -p -t "$p" @agent_context "$(( ${a:-0} + ${b:-0} + ${c2:-0} ))"
+    mo=$(safe "$(printf '%s' "$u" | sed -n 's/.*"message":{"model":"\([^"]*\)".*/\1/p')")
+    ef=$(safe "$(printf '%s' "$u" | sed -n 's/.*"effort":"\([^"]*\)".*/\1/p')")
+    set -- set -p -t "$p" @agent_context "$(( ${a:-0} + ${b:-0} + ${c2:-0} ))"
+    [ -n "$mo" ] && set -- "$@" \; set -p -t "$p" @agent_model "$mo"
+    if [ -n "$ef" ]; then set -- "$@" \; set -p -t "$p" @agent_effort "$ef"
+    else set -- "$@" \; set -pu -t "$p" @agent_effort; fi
+    tmux "$@"
   ) </dev/null >/dev/null 2>&1 &
+fi
+
+# Codex: effort (and model) from the rollout's latest turn_context, which it
+# writes as each turn starts — read once a turn, off the critical path.
+if [ "$agent" = codex ] && [ -z "$aid" ] && [ -f "$tp" ]; then
+  case $ev in SessionStart|UserPromptSubmit|Stop)
+    (
+      [ "$ev" = UserPromptSubmit ] && sleep 1   # its turn_context lands just after
+      l=$(grep '"type":"turn_context"' "$tp" 2>/dev/null | tail -n 1)
+      [ -n "$l" ] || exit 0
+      mo=$(safe "$(printf '%s' "$l" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')")
+      ef=$(safe "$(printf '%s' "$l" | sed -n 's/.*"effort":"\([^"]*\)".*/\1/p')")
+      set -- set -p -t "$p" @agent_kind codex
+      [ -n "$mo" ] && set -- "$@" \; set -p -t "$p" @agent_model "$mo"
+      [ -n "$ef" ] && set -- "$@" \; set -p -t "$p" @agent_effort "$ef"
+      tmux "$@"
+    ) </dev/null >/dev/null 2>&1 &
+  esac
 fi
 
 # Uncommitted change size and branch, computed off the hook's critical path.
@@ -341,6 +505,16 @@ const BelfryStatus = async () => {
   if (!process.env.TMUX || !process.env.TMUX_PANE) return {}
   const busy = new Set()
   const blocked = new Set()
+  // Child sessions are sub-agents (the task tool's): id → type ("explore").
+  // They're reported as such, with their own model, and stop on going idle.
+  const children = new Map()
+  const child = (sid) => children.has(sid) ? { agent_id: sid, agent_type: children.get(sid) } : null
+  const stopChild = (sid) => {
+    const c = child(sid)
+    if (c) { children.delete(sid); report("SubagentStop", c) }
+  }
+  // The model and effort ("variant": low / high / max …; "-" when none).
+  const meta = (input) => ({ model: input?.model?.modelID ?? "", effort: input?.variant ?? "-" })
   let last = ""
   const publish = (fields) => {
     const state = blocked.size ? "waiting" : busy.size ? "working" : "idle"
@@ -356,13 +530,18 @@ const BelfryStatus = async () => {
     "chat.message": async (input, output) => {
       const text = (output?.parts ?? []).map((p) => (p?.type === "text" ? p.text : "")).join(" ").trim()
       if (input?.sessionID) busy.add(input.sessionID)
-      if (text) { last = "working"; report("prompt", { prompt: text }) } else publish()
+      const c = child(input?.sessionID)
+      if (c) { report("meta", { ...c, ...meta(input) }); return }
+      if (text) { last = "working"; report("prompt", { prompt: text, ...meta(input) }) }
+      else { report("meta", meta(input)); publish() }
     },
     "tool.execute.before": async (input, output) => {
       if (input?.sessionID) busy.add(input.sessionID)
       const a = output?.args ?? {}
       last = "working"
-      report("tool", { tool_name: input?.tool ?? "tool", file_path: a.filePath ?? a.path ?? "", command: a.command ?? "", description: a.description ?? "", url: a.url ?? "" })
+      report("tool", { tool_name: input?.tool ?? "tool", file_path: a.filePath ?? a.path ?? "", command: a.command ?? "",
+                       description: a.description ?? "", url: a.url ?? "", subagent_type: a.subagent_type ?? "",
+                       ...(child(input?.sessionID) ?? {}) })
     },
     "tool.execute.after": async (input) => {
       if (/edit|write|patch/i.test(input?.tool ?? "")) report("edited", { tool_name: input.tool })
@@ -371,15 +550,24 @@ const BelfryStatus = async () => {
       const props = event?.properties ?? {}
       const sid = props.sessionID ?? props.info?.id
       switch (event?.type) {
+        case "session.created": {
+          const info = props.info ?? {}
+          if (!info.id || !info.parentID) break
+          // The task tool titles them "<description> (@<agent> subagent)".
+          const type = /\(@([^)\s]+) subagent\)\s*$/.exec(info.title ?? "")?.[1] ?? "subagent"
+          children.set(info.id, type)
+          report("SubagentStart", { agent_id: info.id, agent_type: type })
+          break
+        }
         case "session.status": {
           const kind = typeof props.status === "string" ? props.status : props.status?.type
           if (!sid || !kind) break
-          if (kind === "idle") busy.delete(sid); else busy.add(sid)
+          if (kind === "idle") { busy.delete(sid); stopChild(sid) } else busy.add(sid)
           publish()
           break
         }
         case "session.idle":
-          if (sid) { busy.delete(sid); blocked.delete(sid) }
+          if (sid) { busy.delete(sid); blocked.delete(sid); stopChild(sid) }
           publish()
           break
         case "permission.asked":
@@ -404,7 +592,7 @@ const BelfryStatus = async () => {
           report("edited")
           break
         case "session.deleted":
-          if (sid) { busy.delete(sid); blocked.delete(sid) }
+          if (sid) { busy.delete(sid); blocked.delete(sid); stopChild(sid) }
           publish()
           break
       }
@@ -459,20 +647,33 @@ export default function (pi) {
   let prompts = 0
   let ended = false
   let endDelivered = false
+  // The model and thinking level, sent with every report ("-": thinking off).
+  const level = (ctx) => {
+    try { return ctx?.thinkingLevel ?? pi.getThinkingLevel?.() } catch { return undefined }
+  }
+  const meta = (ctx, model = ctx?.model, lvl = level(ctx)) => {
+    const f = {}
+    if (model?.id) f.model = String(model.id)
+    if (lvl) f.effort = lvl === "off" ? "-" : String(lvl)
+    return f
+  }
 
   pi.on("session_start", (_event, ctx) => {
     tui = ctx?.mode === undefined || ctx?.mode === "tui"
-    if (tui) report(ctx?.isIdle?.() === false ? "working" : "idle")
+    if (tui) report(ctx?.isIdle?.() === false ? "working" : "idle", meta(ctx))
   })
-  pi.on("input", (event) => {
-    if (tui && typeof event?.text === "string" && event.text.trim()) report("prompt", { prompt: event.text })
+  pi.on("input", (event, ctx) => {
+    if (tui && typeof event?.text === "string" && event.text.trim()) report("prompt", { prompt: event.text, ...meta(ctx) })
   })
-  pi.on("agent_start", () => { if (tui) report("working") })
-  pi.on("tool_execution_start", (event) => {
+  pi.on("agent_start", (_event, ctx) => { if (tui) report("working", meta(ctx)) })
+  pi.on("tool_execution_start", (event, ctx) => {
     if (!tui) return
     const a = event?.args ?? {}
-    report("tool", { tool_name: event?.toolName ?? "tool", file_path: a.path ?? a.file_path ?? "", command: a.command ?? "", description: a.description ?? "", url: a.url ?? "" })
+    report("tool", { tool_name: event?.toolName ?? "tool", file_path: a.path ?? a.file_path ?? "", command: a.command ?? "", description: a.description ?? "", url: a.url ?? "", ...meta(ctx) })
   })
+  // Switching model or thinking level mid-session (not every build has these).
+  try { pi.on("model_select", (event, ctx) => { if (tui) report("meta", meta(ctx, event?.model)) }) } catch {}
+  try { pi.on("thinking_level_select", (event, ctx) => { if (tui) report("meta", meta(ctx, ctx?.model, event?.level)) }) } catch {}
   pi.on("tool_execution_end", (event) => {
     if (tui && /edit|write|patch/i.test(event?.toolName ?? "")) report("edited", { tool_name: event.toolName })
   })

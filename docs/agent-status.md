@@ -85,8 +85,11 @@ Every integration funnels into one POSIX shell script, `belfry-agent-hook <agent
 | `@agent_name` | the agent's session name (Claude Code's, from `~/.claude/sessions/`) |
 | `@agent_diff` | `<insertions> <deletions> <files>` uncommitted vs `HEAD` |
 | `@agent_steps` | tool calls so far this turn |
-| `@agent_subagents` | sub-agents currently running |
-| `@agent_tasks` | running sub-agents as `type: description`, `|`-separated |
+| `@agent_subagents` | sub-agents currently running (the length of `@agent_tasks`) |
+| `@agent_tasks` | running sub-agents as `<id> <model>,<effort> type: description`, `|`-separated; `<id>` is Claude Code's `agent_id`, or `+` until `SubagentStart` claims it; model/effort come from the sub-agent's own transcript (`<session>/subagents/agent-<id>.jsonl`, else its `.meta.json` or the Agent call's `model`), `-` until known (pre-v7 hooks: bare `type: description`) |
+| `@agent_tasks_gone` | the last few stopped sub-agents, so one that resumes after its own background work keeps its description |
+| `@agent_model` | the agent's model: Claude Code — the latest main-thread reply in the transcript (first from `SessionStart`); Codex — every hook's `model`; OpenCode / pi / omp — sent by the plugin |
+| `@agent_effort` | thinking effort: Claude Code — that reply's `effort`; Codex — the rollout's latest `turn_context`; OpenCode — the `variant`; pi / omp — the thinking level. Unset when there's none |
 | `@agent_mode` | permission mode (`default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`) |
 | `@agent_branch` | git branch of the agent's working directory |
 | `@agent_context` | tokens of context in use (Claude Code, read from the transcript's latest usage) |

@@ -1,64 +1,86 @@
 import SwiftUI
 
-/// One agent as a table row: everything about it, flattened to sortable
-/// values. Rebuilt from the live stores on every render, so the table follows
-/// the agents as they work.
+/// One row of the Agents table: an agent, or one of its running sub-agents
+/// (a child row under it). Everything is flattened to sortable values and
+/// rebuilt from the live stores on every render, so the table follows the
+/// agents as they work.
 struct AgentTableRow: Identifiable {
     let id: String
     let entry: AgentEntry
     var agent: AgentPane { entry.agent }
+    /// Set on a sub-agent row.
+    let subagent: Subagent?
+    let children: [AgentTableRow]
 
     /// Lane order: needs you, just finished, working, quiet.
     let rank: Int
     let task: String
-    let place: String
     let activity: String
-    let subagents: Int
-    let context: Int
-    let steps: Int
-    let changes: Int
     let since: Date
 
     @MainActor
     init(_ entry: AgentEntry) {
         id = entry.id
         self.entry = entry
+        subagent = nil
         let agent = entry.agent
         rank = AgentLane.allCases.firstIndex(of: AgentLane.of(agent)) ?? 0
         task = !agent.summary.isEmpty ? agent.summary : (!agent.name.isEmpty ? agent.name : entry.window.title)
-        let folder = entry.window.folder
-        place = folder + (agent.branch.isEmpty || agent.branch == "HEAD" ? "" : " ⎇ \(agent.branch)")
         activity = agent.activity
-        subagents = agent.subagents
-        context = agent.contextTokens ?? 0
-        steps = agent.steps
-        changes = (agent.diff?.added ?? 0) + (agent.diff?.removed ?? 0)
         since = agent.since ?? .distantPast
+        // A finished agent's leftover list is stale, so only a live one has children.
+        let live = agent.state.isBusy || agent.state == .waiting
+        children = live ? agent.tasks.enumerated().map { AgentTableRow(subagent: $1, index: $0, of: entry) } : []
+    }
+
+    /// A sub-agent row, sharing its parent's sort keys so it stays under it.
+    @MainActor
+    private init(subagent: Subagent, index: Int, of entry: AgentEntry) {
+        id = "\(entry.id)#\(index)"
+        self.entry = entry
+        self.subagent = subagent
+        children = []
+        rank = AgentLane.allCases.firstIndex(of: AgentLane.of(entry.agent)) ?? 0
+        task = subagent.title
+        activity = ""
+        since = entry.agent.since ?? .distantPast
     }
 }
 
-/// The Agents window: every agent on every host in a native, sortable table —
-/// status, task, where it lives, what it's doing, its sub-agents, context,
-/// steps, uncommitted changes and time in state. Double-click (or Return) a
-/// row to jump the main window to that agent.
+/// The Agents window: every agent on every host in a native, sortable table,
+/// with each agent's running sub-agents folded underneath it. Five columns —
+/// who and where, what it's doing, model, its numbers, time in state — so it fits
+/// without scrolling sideways. Double-click (or Return) a row to jump the
+/// main window to that agent.
 struct AgentsTableView: View {
     let model: AppModel
     @State private var sortOrder = [KeyPathComparator(\AgentTableRow.rank), KeyPathComparator(\AgentTableRow.since, order: .reverse)]
     @State private var selection: Set<AgentTableRow.ID> = []
+    /// Agents whose sub-agents the user folded away; everything else is open.
+    @State private var collapsed: Set<AgentTableRow.ID> = []
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let rows = AgentEntry.collect(from: model.hosts).map(AgentTableRow.init).sorted(using: sortOrder)
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
-            primaryColumns
-            detailColumns
+        Table(of: AgentTableRow.self, selection: $selection, sortOrder: $sortOrder) {
+            columns
+        } rows: {
+            ForEach(rows) { row in
+                if row.children.isEmpty {
+                    TableRow(row)
+                } else {
+                    DisclosureTableRow(row, isExpanded: expanded(row.id)) {
+                        ForEach(row.children) { TableRow($0) }
+                    }
+                }
+            }
         }
         .contextMenu(forSelectionType: AgentTableRow.ID.self) { ids in
-            if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
+            if let row = find(ids.first, in: rows) {
                 Button("Show in Main Window") { jump(to: row) }
             }
         } primaryAction: { ids in
-            if let id = ids.first, let row = rows.first(where: { $0.id == id }) { jump(to: row) }
+            if let row = find(ids.first, in: rows) { jump(to: row) }
         }
         .overlay {
             if rows.isEmpty {
@@ -81,97 +103,142 @@ struct AgentsTableView: View {
 
     typealias Comparator = KeyPathComparator<AgentTableRow>
 
-    /// Status, task, agent, where, and what it's doing now.
     @TableColumnBuilder<AgentTableRow, Comparator>
-    private var primaryColumns: some TableColumnContent<AgentTableRow, Comparator> {
-            TableColumn("Status", value: \.rank) { row in
+    private var columns: some TableColumnContent<AgentTableRow, Comparator> {
+        // Status badge, the task, and where it lives — or, for a sub-agent,
+        // its description and type.
+        TableColumn("Agent", value: \.rank) { row in
+            if let sub = row.subagent {
                 HStack(spacing: 6) {
+                    Image(systemName: "circle").font(.system(size: 9)).foregroundStyle(.tertiary)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(sub.title).lineLimit(1).help(sub.title)
+                        if !sub.description.isEmpty {
+                            Text(sub.type).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
                     AgentBadge(state: row.agent.state, kind: row.agent.kind, title: row.agent.name,
                                unseen: row.agent.finishedUnseen)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(row.task)
+                            .fontWeight(row.agent.state.needsAttention || row.agent.finishedUnseen ? .semibold : .regular)
+                            .lineLimit(1)
+                            .help(row.task)
+                        Text(whereText(row))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .help(whereText(row))
+                    }
+                }
+            }
+        }
+        .width(min: 220, ideal: 380)
+
+        // Its state, and what it's doing right now.
+        TableColumn("Now", value: \.activity) { row in
+            if row.subagent == nil {
+                VStack(alignment: .leading, spacing: 0) {
                     Text(stateWord(row.agent))
                         .foregroundStyle(stateColor(row.agent))
-                }
-            }
-            .width(min: 90, ideal: 110, max: 140)
-
-            TableColumn("Task", value: \.task) { row in
-                Text(row.task)
-                    .fontWeight(row.agent.state.needsAttention || row.agent.finishedUnseen ? .semibold : .regular)
-                    .help(row.task)
-            }
-            .width(min: 160, ideal: 260)
-
-            TableColumn("Agent") { row in
-                Text(row.agent.kind.displayName + (row.agent.name.isEmpty ? "" : " · \(row.agent.name)"))
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 80, ideal: 140)
-
-            TableColumn("Where", value: \.place) { row in
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(row.place).lineLimit(1)
-                    Text("\(row.entry.host.displayName) · \(row.entry.session.name):\(row.entry.window.index)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    if !row.activity.isEmpty {
+                        Text(row.activity)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .help(row.activity)
+                    }
                 }
             }
-            .width(min: 120, ideal: 190)
+        }
+        .width(min: 140, ideal: 260)
 
-            TableColumn("Now", value: \.activity) { row in
-                Text(row.activity.isEmpty ? "—" : row.activity)
-                    .foregroundStyle(row.agent.state == .waiting ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
-                    .help(row.activity)
+        // Model, then thinking effort — the sub-agents' own, on their rows.
+        TableColumn("Model") { row in
+            let model = row.subagent?.model ?? row.agent.model
+            let effort = row.subagent?.effort ?? row.agent.effort
+            if !model.isEmpty || !effort.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(model.isEmpty ? "—" : ModelName.short(model))
+                        .foregroundStyle(row.subagent == nil ? .primary : .secondary)
+                        .lineLimit(1)
+                        .help(model)
+                    if !effort.isEmpty {
+                        Text(effort).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
             }
-            .width(min: 140, ideal: 230)
+        }
+        .width(min: 70, ideal: 95, max: 130)
 
+        // Mode, context, steps and sub-agents; uncommitted changes below.
+        TableColumn("Details") { row in
+            if row.subagent == nil {
+                VStack(alignment: .leading, spacing: 0) {
+                    detailText(row.agent)
+                        .font(.system(size: 11).monospacedDigit())
+                        .lineLimit(1)
+                    if let diff = row.agent.diff, diff.added + diff.removed > 0 {
+                        DiffStatText(diff: diff).font(.system(size: 11))
+                    }
+                }
+            }
+        }
+        .width(min: 110, ideal: 190)
+
+        TableColumn("Time", value: \.since) { row in
+            if row.subagent == nil, row.agent.since != nil {
+                ElapsedText(since: row.since)
+            }
+        }
+        .width(min: 45, ideal: 55, max: 70)
     }
 
-    /// Sub-agents, mode, context, steps, changes and time in state.
-    @TableColumnBuilder<AgentTableRow, Comparator>
-    private var detailColumns: some TableColumnContent<AgentTableRow, Comparator> {
-            TableColumn("Sub-agents", value: \.subagents) { row in
-                Text(row.subagents == 0 ? "—" : "\(row.subagents)")
-                    .monospacedDigit()
-                    .help(row.agent.tasks.joined(separator: "\n"))
-            }
-            .width(min: 60, ideal: 75, max: 90)
+    private func expanded(_ id: AgentTableRow.ID) -> Binding<Bool> {
+        Binding(get: { !collapsed.contains(id) },
+                set: { if $0 { collapsed.remove(id) } else { collapsed.insert(id) } })
+    }
 
-            TableColumn("Mode") { row in
-                Text(modeLabel(row.agent.mode))
-                    .foregroundStyle(row.agent.mode == "auto" ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
-            }
-            .width(min: 50, ideal: 80, max: 110)
+    /// A row by id, looking inside the sub-agent rows too.
+    private func find(_ id: AgentTableRow.ID?, in rows: [AgentTableRow]) -> AgentTableRow? {
+        guard let id else { return nil }
+        for row in rows {
+            if row.id == id { return row }
+            if let child = row.children.first(where: { $0.id == id }) { return child }
+        }
+        return nil
+    }
 
-            TableColumn("Context", value: \.context) { row in
-                Text(row.context == 0 ? "—" : compact(row.context))
-                    .monospacedDigit()
-            }
-            .width(min: 55, ideal: 65, max: 80)
+    /// "hummingbird ⎇ main · Local · hummingbird:1 · Claude"
+    private func whereText(_ row: AgentTableRow) -> String {
+        let agent = row.agent
+        var parts = [row.entry.window.folder
+            + (agent.branch.isEmpty || agent.branch == "HEAD" ? "" : " ⎇ \(agent.branch)")]
+        parts.append(row.entry.host.displayName)
+        parts.append("\(row.entry.session.name):\(row.entry.window.index)")
+        parts.append(agent.kind.displayName + (agent.name.isEmpty ? "" : " · \(agent.name)"))
+        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
 
-            TableColumn("Steps", value: \.steps) { row in
-                Text(row.steps == 0 ? "—" : "\(row.steps)")
-                    .monospacedDigit()
-            }
-            .width(min: 45, ideal: 55, max: 70)
-
-            TableColumn("Changes", value: \.changes) { row in
-                if let diff = row.agent.diff, diff.added + diff.removed > 0 {
-                    DiffStatText(diff: diff)
-                } else {
-                    Text("—").foregroundStyle(.tertiary)
-                }
-            }
-            .width(min: 70, ideal: 90, max: 120)
-
-            TableColumn("Time", value: \.since) { row in
-                if row.agent.since != nil {
-                    ElapsedText(since: row.since)
-                } else {
-                    Text("—").foregroundStyle(.tertiary)
-                }
-            }
-            .width(min: 45, ideal: 55, max: 70)
+    /// "▸▸ auto · 84k ctx · 23 steps · 2 agents", only the parts it has.
+    private func detailText(_ agent: AgentPane) -> Text {
+        var parts: [Text] = []
+        let mode = modeLabel(agent.mode)
+        if !mode.isEmpty {
+            parts.append(Text(mode).foregroundStyle(agent.mode == "auto" ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary)))
+        }
+        if let ctx = agent.contextTokens, ctx > 0 { parts.append(Text("\(compact(ctx)) ctx").foregroundStyle(.secondary)) }
+        if agent.steps > 0 { parts.append(Text("\(agent.steps) steps").foregroundStyle(.secondary)) }
+        if agent.subagents > 0 {
+            parts.append(Text("\(agent.subagents) agent\(agent.subagents == 1 ? "" : "s")").foregroundStyle(.secondary))
+        }
+        guard var text = parts.first else { return Text("—").foregroundStyle(.tertiary) }
+        for part in parts.dropFirst() { text = text + Text(" · ").foregroundStyle(.tertiary) + part }
+        return text
     }
 
     private func jump(to row: AgentTableRow) {
@@ -215,7 +282,7 @@ struct AgentsTableView: View {
         case "acceptEdits": "accept edits"
         case "plan": "plan"
         case "bypassPermissions": "bypass"
-        case "", "default": "—"
+        case "", "default": ""
         default: mode
         }
     }

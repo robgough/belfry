@@ -468,20 +468,33 @@ private struct ModeStyle {
 }
 
 /// One running sub-agent under its parent's row: "○ general-purpose  Verifying
-/// final release build state", as Claude Code lists them.
-private struct SubagentLine: View {
-    let task: String
+/// final release build state", as Claude Code lists them, with its model at
+/// the end ("Haiku 4.5") when the hooks know it.
+struct SubagentLine: View {
+    let task: Subagent
+    var size: CGFloat = 11
 
     var body: some View {
-        let parts = task.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-        let type = parts.count == 2 ? parts[0] : ""
-        let description = parts.count == 2 ? parts[1] : task
-        (Text("○ ").foregroundStyle(.tertiary)
-         + Text(type.isEmpty ? "" : type + "  ").foregroundStyle(.secondary)
-         + Text(description).foregroundStyle(.primary.opacity(0.8)))
-            .font(.system(size: 11))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .hoverHint(task)
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            (Text("○ ").foregroundStyle(.tertiary)
+             + Text(task.description.isEmpty ? "" : task.type + "  ").foregroundStyle(.secondary)
+             + Text(task.title).foregroundStyle(.primary.opacity(0.8)))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if !task.model.isEmpty {
+                Spacer(minLength: 4)
+                Text(ModelName.short(task.model))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .font(.system(size: size))
+        .hoverHint(hint)
+    }
+
+    private var hint: String {
+        let model = ModelName.label(model: task.model, effort: task.effort)
+        return [task.type, task.description, model].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }

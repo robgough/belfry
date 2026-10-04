@@ -123,7 +123,7 @@ final class ControlModeClient {
         + "#{window_bell_flag}#{@claude_state}#{@claude_title}#{window_name}"
         + "#{P:#{pane_id}#{pane_active}#{pane_current_command}#{pane_current_path}"
         + "#{@agent_state}#{@agent_ts}#{@agent_activity}#{@agent_summary}#{@agent_diff}"
-        + "#{@agent_steps}#{@agent_subagents}#{@agent_tasks}#{@agent_mode}#{@agent_branch}#{@agent_context}.}|}~}"
+        + "#{@agent_steps}#{@agent_subagents}#{@agent_tasks}#{@agent_mode}#{@agent_branch}#{@agent_context}#{@agent_model}#{@agent_effort}.}|}~}"
 
     @MainActor
     init(store: TmuxStore, channel: any ControlChannel, controlSessionName: String) {

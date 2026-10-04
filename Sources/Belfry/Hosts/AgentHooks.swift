@@ -26,7 +26,7 @@ enum AgentHooks {
     /// commands and the script header carry `belfry-status-v<N>`; `check()`
     /// reports an older (or bare) marker as installed-but-outdated, and
     /// `HostModel` silently reinstalls to roll the change out.
-    static let version = 6
+    static let version = 9
     static var versionedMarker: String { "\(marker)-v\(version)" }
 
     private struct HookError: Error { let message: String }

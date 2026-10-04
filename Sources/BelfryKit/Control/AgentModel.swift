@@ -140,9 +140,12 @@ struct AgentPane: Identifiable, Hashable {
     /// unknown) — a sense of the job's size alongside what it's doing now.
     var steps: Int = 0
     var subagents: Int = 0
-    /// Running sub-agents as "type: description" (e.g. "general-purpose:
-    /// Verifying the release build").
-    var tasks: [String] = []
+    /// Running sub-agents, in launch order.
+    var tasks: [Subagent] = []
+    /// Model and thinking effort of its latest reply ("claude-opus-5-5",
+    /// "high"); "" when unknown.
+    var model: String = ""
+    var effort: String = ""
     /// Permission mode as the agent reports it ("default", "acceptEdits",
     /// "plan", "auto", "bypassPermissions"); "" when unknown.
     var mode: String = ""
@@ -182,6 +185,8 @@ struct AgentPane: Identifiable, Hashable {
         var branch: String = ""    // @agent_branch
         var context: String = ""   // @agent_context
         var tasks: String = ""     // @agent_tasks
+        var model: String = ""     // @agent_model
+        var effort: String = ""    // @agent_effort
         var legacyClaudeState: String  // @claude_state (window option, pre-v4 hooks)
         var legacyClaudeTitle: String  // @claude_title (window option)
     }
@@ -237,6 +242,7 @@ struct AgentPane: Identifiable, Hashable {
         }
         guard let kind, let state else { return nil }
 
+        let tasks = optionsTrusted ? Self.parseTasks(raw.tasks) : []
         let since = optionsTrusted ? TimeInterval(raw.timestamp).map { Date(timeIntervalSince1970: $0) } : nil
         return AgentPane(
             id: raw.paneID, windowID: raw.windowID, sessionID: raw.sessionID,
@@ -246,8 +252,10 @@ struct AgentPane: Identifiable, Hashable {
             activity: optionsTrusted ? raw.activity : "",
             diff: optionsTrusted ? DiffStat(option: raw.diff) : nil,
             steps: optionsTrusted ? Int(raw.steps) ?? 0 : 0,
-            subagents: optionsTrusted ? Int(raw.subagents) ?? 0 : 0,
-            tasks: optionsTrusted ? raw.tasks.split(separator: "|").map(String.init) : [],
+            subagents: optionsTrusted ? max(Int(raw.subagents) ?? 0, tasks.count) : 0,
+            tasks: tasks,
+            model: optionsTrusted ? raw.model : "",
+            effort: optionsTrusted ? raw.effort : "",
             mode: optionsTrusted ? raw.mode : "",
             branch: optionsTrusted ? raw.branch : "",
             contextTokens: optionsTrusted ? Int(raw.context) : nil,
@@ -263,6 +271,31 @@ struct AgentPane: Identifiable, Hashable {
         guard let first = title.first, first == "✳" || isBrailleSpinner(first) else { return nil }
         let rest = title.dropFirst().trimmingCharacters(in: .whitespaces)
         return rest.isEmpty ? nil : rest
+    }
+
+    /// `@agent_tasks` → one `Subagent` per entry. Hooks v7+ write
+    /// "<id> <model>,<effort> type: description" (the id is "+" until it
+    /// starts, model/effort "-" until known); older hooks the bare
+    /// "type: description".
+    static func parseTasks(_ option: String) -> [Subagent] {
+        option.split(separator: "|").map { entry in
+            var rest = Substring(entry)
+            var model = "", effort = ""
+            if let space = rest.firstIndex(of: " "), !rest[..<space].contains(":") {
+                rest = rest[rest.index(after: space)...]                       // the id
+                if let space = rest.firstIndex(of: " "), !rest[..<space].contains(":"),
+                   rest[..<space].contains(",") {
+                    let meta = rest[..<space].split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
+                    model = meta.first.map { $0 == "-" ? "" : String($0) } ?? ""
+                    effort = meta.count > 1 && meta[1] != "-" ? String(meta[1]) : ""
+                    rest = rest[rest.index(after: space)...]
+                }
+            }
+            let parts = rest.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            return parts.count == 2
+                ? Subagent(type: parts[0], description: parts[1], model: model, effort: effort)
+                : Subagent(type: String(rest), description: "", model: model, effort: effort)
+        }
     }
 
     private static func isBrailleSpinner(_ c: Character) -> Bool {
@@ -294,8 +327,9 @@ enum PaneListing {
         + "\t#{@agent_kind}\t#{@agent_state}\t#{@agent_ts}\t#{@agent_diff}\t#{@claude_state}\t#{@claude_title}"
         + "\t#{@agent_name}\t#{@agent_activity}\t#{@agent_summary}\t#{@agent_steps}\t#{@agent_subagents}"
         + "\t#{@agent_mode}\t#{@agent_branch}\t#{@agent_context}\t#{@agent_tasks}"
+        + "\t#{@agent_model}\t#{@agent_effort}"
         + "\t#{pane_title}\t#{window_name}"
-    static let fieldCount = 28
+    static let fieldCount = 30
 
     /// Fold `PANE` lines (see `format`) into windows: window fields from any
     /// of its panes, the active pane's command/path as the window's, and an
@@ -312,7 +346,7 @@ enum PaneListing {
             if byID[windowID] == nil {
                 order.append(windowID)
                 byID[windowID] = TmuxWindow(
-                    id: windowID, sessionID: f[1], index: Int(f[3]) ?? 0, name: f[27],
+                    id: windowID, sessionID: f[1], index: Int(f[3]) ?? 0, name: f[29],
                     isActive: f[4] == "1", hasActivity: f[5] == "1", hasBell: f[6] == "1")
             }
             if paneActive || byID[windowID]?.currentPath.isEmpty == true {
@@ -321,15 +355,57 @@ enum PaneListing {
             }
             let raw = AgentPane.Raw(
                 paneID: f[7], windowID: windowID, sessionID: f[1], isActivePane: paneActive,
-                command: f[9], currentPath: f[10], title: f[26],
+                command: f[9], currentPath: f[10], title: f[28],
                 kind: f[11], state: f[12], timestamp: f[13], activity: f[18], summary: f[19],
                 name: f[17], diff: f[14], steps: f[20], subagents: f[21],
-                mode: f[22], branch: f[23], context: f[24], tasks: f[25],
+                mode: f[22], branch: f[23], context: f[24], tasks: f[25], model: f[26], effort: f[27],
                 legacyClaudeState: f[15], legacyClaudeTitle: f[16])
             if let agent = AgentPane.detect(raw) {
                 byID[windowID]?.agents.append(agent)
             }
         }
         return order.compactMap { byID[$0] }
+    }
+}
+
+/// A running sub-agent: its type ("Explore"), what it was asked to do, and
+/// the model and effort it's running on ("" when unknown).
+struct Subagent: Hashable {
+    var type: String
+    var description: String
+    var model: String = ""
+    var effort: String = ""
+
+    /// What to call it: the description, else the type.
+    var title: String { description.isEmpty ? type : description }
+}
+
+enum ModelName {
+    /// "claude-opus-5-5" → "Opus 5.5", "claude-haiku-4-5-20251001" → "Haiku 4.5",
+    /// "claude-3-5-sonnet-20241022" → "Sonnet 3.5", "haiku" → "Haiku",
+    /// "gpt-5.6-terra" → "GPT-5.6 Terra"; a "provider/" prefix is dropped, and
+    /// anything else (another vendor's id) is shown as it is.
+    static func short(_ id: String) -> String {
+        let id = id.split(separator: "/").last.map(String.init) ?? id   // "anthropic/claude-…"
+        if id.lowercased().hasPrefix("gpt-") {                           // "gpt-5.6-terra" → "GPT-5.6 Terra"
+            let rest = id.dropFirst(4).split(separator: "-")
+            guard let version = rest.first else { return id }
+            return (["GPT-\(version)"] + rest.dropFirst().map { $0.prefix(1).uppercased() + $0.dropFirst() })
+                .joined(separator: " ")
+        }
+        var tokens = id.lowercased().split(separator: "-").map(String.init)
+        guard tokens.first == "claude" || tokens.count == 1 else { return id }
+        if tokens.first == "claude" { tokens.removeFirst() }
+        if let last = tokens.last, last.count == 8, last.allSatisfy(\.isNumber) { tokens.removeLast() } // a date
+        var suffix = ""
+        if tokens.last == "1m" { tokens.removeLast(); suffix = " 1M" }
+        guard let name = tokens.first(where: { $0.first?.isLetter == true }) else { return id }
+        let version = tokens.filter { $0.allSatisfy(\.isNumber) }.joined(separator: ".")
+        return name.prefix(1).uppercased() + name.dropFirst() + (version.isEmpty ? "" : " \(version)") + suffix
+    }
+
+    /// "Opus 5.5 · high", "Haiku 4.5", or "" when neither is known.
+    static func label(model: String, effort: String) -> String {
+        [model.isEmpty ? "" : short(model), effort].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }

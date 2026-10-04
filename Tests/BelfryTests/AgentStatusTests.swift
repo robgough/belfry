@@ -60,13 +60,51 @@ struct AgentDetectionTests {
         // pi/omp may show as `node`/`bun`; their options are trusted.
         #expect(AgentPane.detect(raw("node", kind: "pi", state: "idle"))?.kind == .pi)
     }
+
+    @Test func subagentListParsesEveryHookFormat() {
+        #expect(AgentPane.parseTasks("a4ae43 claude-haiku-4-5-20251001,- general-purpose: Probe A"
+                                     + "|+ haiku,- Explore: Map cards|bbb -,- Explore")
+                == [Subagent(type: "general-purpose", description: "Probe A", model: "claude-haiku-4-5-20251001"),
+                    Subagent(type: "Explore", description: "Map cards", model: "haiku"),
+                    Subagent(type: "Explore", description: "")])
+        #expect(AgentPane.parseTasks("ccc claude-opus-5-5,high Plan: Design it, carefully")
+                == [Subagent(type: "Plan", description: "Design it, carefully", model: "claude-opus-5-5", effort: "high")])
+        // An id but no model/effort (an early v7 build), and pre-v7's bare "type: description".
+        #expect(AgentPane.parseTasks("aaa general-purpose: A") == [Subagent(type: "general-purpose", description: "A")])
+        #expect(AgentPane.parseTasks("general-purpose: Audit the parser")
+                == [Subagent(type: "general-purpose", description: "Audit the parser")])
+        #expect(AgentPane.parseTasks("") == [])
+    }
+
+    @Test func modelNamesReadLikeTheirMarketingNames() {
+        #expect(ModelName.short("claude-opus-5-5") == "Opus 5.5")
+        #expect(ModelName.short("claude-haiku-4-5-20251001") == "Haiku 4.5")
+        #expect(ModelName.short("claude-3-5-sonnet-20241022") == "Sonnet 3.5")
+        #expect(ModelName.short("claude-opus-4-6-1m") == "Opus 4.6 1M")
+        #expect(ModelName.short("haiku") == "Haiku")
+        #expect(ModelName.short("gpt-5-codex") == "GPT-5 Codex")
+        #expect(ModelName.short("gpt-5.6-terra") == "GPT-5.6 Terra")
+        #expect(ModelName.short("anthropic/claude-sonnet-4-5") == "Sonnet 4.5")
+        #expect(ModelName.short("qwen3-coder") == "qwen3-coder")
+        #expect(ModelName.label(model: "claude-fable-5-1", effort: "max") == "Fable 5.1 · max")
+        #expect(ModelName.label(model: "", effort: "") == "")
+    }
+
+    @Test func subagentCountNeverUndercutsTheList() throws {
+        var r = raw("2.1.284", kind: "claude", state: "working")
+        r.subagents = "1"
+        r.tasks = "aaa -,- general-purpose: A|bbb -,- general-purpose: B"
+        let agent = try #require(AgentPane.detect(r))
+        #expect(agent.subagents == 2)
+        #expect(agent.tasks.map(\.title) == ["A", "B"])
+    }
 }
 
 struct PaneListingTests {
     private func line(window: String, index: Int, pane: String, active: Bool, command: String,
                       kind: String = "", state: String = "", title: String = "host", name: String = "w") -> String {
         ["PANE", "$1", window, "\(index)", "1", "0", "0", pane, active ? "1" : "0", command, "/src/\(pane)",
-         kind, state, "", "", "", "", "", "", "", "", "", "", "", "", "", title, name].joined(separator: "\t")
+         kind, state, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", title, name].joined(separator: "\t")
     }
 
     @Test func foldsPanesIntoWindowsKeepingEveryAgent() throws {
