@@ -609,6 +609,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         DebugSnapshot.install()
         #endif
+        // After sleep, ssh links that look live are often dead (ServerAlive
+        // takes up to a minute to notice) — probe them and skip any pending
+        // backoff so remote hosts are back by the time the lid is open.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { AppModel.current?.systemDidWake() }
+        }
         // Safety net: a SwiftUI single-`Window` scene doesn't always terminate the
         // app when its window closes, which can strand Belfry "still running" so the
         // user force-quits it — and a Dock force-quit force-kills the whole coalition,

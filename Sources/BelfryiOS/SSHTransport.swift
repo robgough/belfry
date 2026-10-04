@@ -187,6 +187,11 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     private let controller = TerminiTerminalController()
     let terminalView = BelfryGhosttySurfaceView()
     private(set) var terminalSize: TerminiTerminalSize?
+    private let link = SurfaceLinkTracker()
+    var linkState: SurfaceLinkState { link.state }
+    /// Between `start()` and the attach settling: `connect()` disconnects
+    /// first, and that transient `.disconnected` mustn't read as a drop.
+    private var attachInFlight = false
 
     init(configuration: TerminiSSHConfiguration) {
         self.configuration = configuration
@@ -216,6 +221,23 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
             guard let self else { return }
             terminalSize = size
             session.updateTerminalSize(size)
+        }
+        session.onStatusChange = { [weak self] status in
+            guard let self else { return }
+            switch status {
+            case .connecting:
+                link.state = .attaching
+            case .connected:
+                attachInFlight = false
+                link.state = .attached
+            case .failed:
+                attachInFlight = false
+                link.state = .down
+            case .disconnected:
+                // Remote tmux client exited or the connection closed. A
+                // deliberate `stop()` has already set `.idle`.
+                if !attachInFlight && link.state != .idle { link.state = .down }
+            }
         }
         terminalView.onRendererRebuild = { [weak self] in
             // The rebuilt surface starts blank; a winsize nudge makes tmux
@@ -248,11 +270,15 @@ final class BelfrySSHWorkspace: NSObject, TerminalWorkspace {
     }
 
     func start() {
+        attachInFlight = true
+        link.state = .attaching
         let configuration = configuration
         Task { await session.connect(configuration: configuration) }
     }
 
     func stop() {
+        attachInFlight = false
+        link.state = .idle
         Task { await session.disconnect() }
     }
 

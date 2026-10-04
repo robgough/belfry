@@ -70,6 +70,10 @@ struct TerminalDetailView: View {
                 }
             }
             #endif
+            // Over the terminal only — a web tab has its own idea of liveness.
+            if showsTerminal, let host = selectedHost, let session = selectedSession {
+                ConnectionOverlay(host: host, sessionID: session.id)
+            }
             if selectedSession == nil {
                 Text("Select a window")
                     .foregroundStyle(.secondary)

@@ -12,6 +12,10 @@ final class SessionSurfaceStore {
     /// Ordered list of activated session ids, for a stable ForEach in the detail.
     private(set) var activatedSessionIDs: [String] = []
     private var workspaces: [String: any TerminalWorkspace] = [:]
+    /// Last automatic re-attach per session, so a surface that keeps failing
+    /// (bad auth, a broken session) retries at a walk, not on every re-list.
+    @ObservationIgnored private var lastRestart: [String: Date] = [:]
+    private static let minRestartInterval: TimeInterval = 10
 
     init(makeWorkspace: @escaping (String) -> any TerminalWorkspace) {
         self.makeWorkspace = makeWorkspace
@@ -43,11 +47,31 @@ final class SessionSurfaceStore {
         for (_, workspace) in workspaces { workspace.start() }
     }
 
+    /// Re-attach surfaces whose link dropped while the host stayed connected.
+    /// Called after a session list has pruned dead sessions, so a re-attach
+    /// (`new-session -A`) only ever targets a session that still exists.
+    func restartDropped() {
+        let now = Date()
+        for (id, workspace) in workspaces where workspace.linkState == .down {
+            if let last = lastRestart[id], now.timeIntervalSince(last) < Self.minRestartInterval { continue }
+            lastRestart[id] = now
+            workspace.start()
+        }
+    }
+
+    /// Re-attach one surface now (the overlay's "Reattach").
+    func restart(sessionID: String) {
+        guard let workspace = workspaces[sessionID] else { return }
+        lastRestart[sessionID] = Date()
+        workspace.start()
+    }
+
     /// Tear down every surface (used when the host disconnects).
     func teardownAll() {
         for (_, workspace) in workspaces { workspace.stop() }
         workspaces.removeAll()
         activatedSessionIDs.removeAll()
+        lastRestart.removeAll()
     }
 
     /// Tear down one session's surface. Used when the surface's tmux client
@@ -57,6 +81,7 @@ final class SessionSurfaceStore {
         guard let workspace = workspaces[sessionID] else { return }
         workspace.stop()
         workspaces[sessionID] = nil
+        lastRestart[sessionID] = nil
         activatedSessionIDs.removeAll { $0 == sessionID }
     }
 
@@ -67,6 +92,7 @@ final class SessionSurfaceStore {
         for id in dead {
             workspaces[id]?.stop()
             workspaces[id] = nil
+            lastRestart[id] = nil
         }
         activatedSessionIDs.removeAll { dead.contains($0) }
     }

@@ -786,7 +786,7 @@ private struct HostHeader: View {
                     }
                     if host.canDisconnect {
                         switch host.store.status {
-                        case .connected, .connecting, .reconnecting:
+                        case .connected, .connecting, .reconnecting, .waitingForNetwork:
                             HoverIconButton(systemName: "power",
                                             hint: "Disconnect (sessions keep running)") {
                                 host.disconnect()
@@ -854,7 +854,7 @@ struct HostMenuItems: View {
         if host.canDisconnect {
             Divider()
             switch host.store.status {
-            case .connected, .connecting, .reconnecting:
+            case .connected, .connecting, .reconnecting, .waitingForNetwork:
                 Button("Disconnect") { host.disconnect() }
             case .disconnected, .offline:
                 Button("Connect") { host.reconnect() }
@@ -1300,7 +1300,7 @@ extension ConnectionStatus {
     var tint: Color {
         switch self {
         case .connected: return AppTheme.statusGood
-        case .connecting, .reconnecting, .disconnected: return AppTheme.statusWarn
+        case .connecting, .reconnecting, .disconnected, .waitingForNetwork: return AppTheme.statusWarn
         case .offline: return Color.secondary
         }
     }
@@ -1322,6 +1322,7 @@ struct HostStatusDot: View {
         case .connecting: return "Connecting…"
         case .reconnecting(let n): return "Reconnecting… (attempt \(n))"
         case .disconnected: return "Connection lost"
+        case .waitingForNetwork: return "Waiting for network"
         case .offline: return "Disconnected"
         }
     }
@@ -1349,6 +1350,9 @@ struct HostStatusRow: View {
                     .help(reason)
                 InlineLinkButton(title: "Reconnect") { host.reconnect() }
             }
+        case .waitingForNetwork:
+            Label("Waiting for network", systemImage: "wifi.slash")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         case .offline:
             HStack(spacing: 6) {
                 Text("Disconnected").font(.system(size: 11)).foregroundStyle(.secondary)

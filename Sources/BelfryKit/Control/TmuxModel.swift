@@ -24,6 +24,7 @@ enum ConnectionStatus: Hashable {
     case connected
     case reconnecting(attempt: Int)
     case disconnected(String)   // unexpected drop / error (auto-reconnect pending)
+    case waitingForNetwork      // wants a connection but the device has no route; retries paused
     case offline                // user asked to disconnect; stays down until reconnected
 
     var isLive: Bool {

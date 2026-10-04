@@ -50,6 +50,19 @@ final class ControlModeClient {
     /// Fires if a fresh connect never delivers its first session list in time, so
     /// a stalled control stream surfaces a reason instead of spinning forever.
     private var connectWatchdog: Timer?
+    /// Armed by each re-list (and by `checkLiveness`) when `replyTimeout` is
+    /// set; any byte from the server disarms it. If it fires, the link is
+    /// half-open — writes vanish into a dead TCP connection that the OS may not
+    /// give up on for minutes — so we fail it ourselves and let the owner
+    /// reconnect. Rides the poll that already runs, so it costs no traffic.
+    private var replyWatchdog: Timer?
+    /// How long a sent command may go unanswered before the link is declared
+    /// dead; nil disables the check (the local server, where a slow reply
+    /// means memory pressure, not a dead link, and HostModel owns that case).
+    private let replyTimeout: TimeInterval?
+    /// `handleExit` runs once per client: a self-detected failure and the
+    /// channel's own exit callback can both arrive.
+    private var exitHandled = false
     private var isStarted = false
     /// Set once the server delivers a `%subscription-changed` (proving it
     /// supports `refresh-client -B` push updates); the poll then drops from
@@ -126,10 +139,12 @@ final class ControlModeClient {
         + "#{@agent_steps}#{@agent_subagents}#{@agent_tasks}#{@agent_mode}#{@agent_branch}#{@agent_context}#{@agent_model}#{@agent_effort}.}|}~}"
 
     @MainActor
-    init(store: TmuxStore, channel: any ControlChannel, controlSessionName: String) {
+    init(store: TmuxStore, channel: any ControlChannel, controlSessionName: String,
+         replyTimeout: TimeInterval? = nil) {
         self.store = store
         self.channel = channel
         self.controlSessionName = controlSessionName
+        self.replyTimeout = replyTimeout
         channel.onOutput = { [weak self] data in
             self?.ingest(data)
         }
@@ -148,6 +163,7 @@ final class ControlModeClient {
         didReap = false
         lastDiagnostic = nil
         stopRequested = false
+        exitHandled = false
         armConnectWatchdog()
         channel.start()
     }
@@ -175,7 +191,46 @@ final class ControlModeClient {
         }
         // Tear the half-open channel down; the normal exit path surfaces the reason
         // and lets the owner back off / stop looping.
+        fail()
+    }
+
+    /// Give up on the channel from our side. `channel.stop()` alone isn't
+    /// enough: the SSH channel treats a stop as deliberate and never reports
+    /// an exit, which used to leave a stalled iOS connect spinning forever.
+    @MainActor
+    private func fail() {
         channel.stop()
+        handleExit(-1)
+    }
+
+    /// Probe a link that's believed live (network path changed, Mac woke from
+    /// sleep): re-list now and fail the link if nothing comes back within
+    /// `timeout`. No-op unless connected.
+    @MainActor
+    func checkLiveness(timeout: TimeInterval = 5) {
+        guard isStarted, !stopRequested else { return }
+        armReplyWatchdog(timeout: timeout, replacing: true)
+        refreshNow()
+    }
+
+    @MainActor
+    private func armReplyWatchdog(timeout: TimeInterval, replacing: Bool) {
+        if replyWatchdog != nil && !replacing { return }
+        replyWatchdog?.invalidate()
+        let timer = Timer(timeInterval: timeout, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.replyTimedOut(after: timeout) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        replyWatchdog = timer
+    }
+
+    @MainActor
+    private func replyTimedOut(after timeout: TimeInterval) {
+        replyWatchdog = nil
+        guard isStarted, !stopRequested else { return }
+        clog("no reply from server within \(Int(timeout))s — treating link as dead")
+        lastDiagnostic = "connection timed out"
+        fail()
     }
 
     /// The channel is up (PTY spawned / SSH exec running): send the initial
@@ -216,6 +271,8 @@ final class ControlModeClient {
         refreshTimer = nil
         connectWatchdog?.invalidate()
         connectWatchdog = nil
+        replyWatchdog?.invalidate()
+        replyWatchdog = nil
         isStarted = false
         channel.stop()
     }
@@ -299,6 +356,7 @@ final class ControlModeClient {
     /// Re-query the full session + window list.
     @MainActor
     private func refreshNow() {
+        if let replyTimeout { armReplyWatchdog(timeout: replyTimeout, replacing: false) }
         send("list-sessions -F '\(Self.sessionFormat)'")
         send("list-panes -a -F '\(PaneListing.format)'")
     }
@@ -321,6 +379,11 @@ final class ControlModeClient {
 
     @MainActor
     private func ingest(_ data: Data) {
+        // Anything from the server proves the link is alive.
+        if replyWatchdog != nil {
+            replyWatchdog?.invalidate()
+            replyWatchdog = nil
+        }
         lineBuffer.append(data)
         while let newlineIndex = lineBuffer.firstIndex(of: 0x0A) {
             let lineData = lineBuffer[lineBuffer.startIndex..<newlineIndex]
@@ -467,6 +530,8 @@ final class ControlModeClient {
 
     @MainActor
     private func handleExit(_ code: Int32) {
+        guard !exitHandled else { return }
+        exitHandled = true
         clog("control client exited (code \(code))")
         if store.status.isLive || isStarted {
             store.status = .disconnected("connection lost")
@@ -475,6 +540,8 @@ final class ControlModeClient {
         refreshTimer = nil
         connectWatchdog?.invalidate()
         connectWatchdog = nil
+        replyWatchdog?.invalidate()
+        replyWatchdog = nil
         isStarted = false
         onExitHandler?(lastDiagnostic)
     }

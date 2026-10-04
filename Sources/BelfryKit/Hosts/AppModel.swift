@@ -21,6 +21,10 @@ final class AppModel {
     /// warm while the user works elsewhere.
     let browserTabs = BrowserTabStore()
 
+    /// Device network path, fanned out to every host so reconnects pause with
+    /// no route and fire the moment one returns (see HostModel).
+    private let networkMonitor = NetworkMonitor()
+
     /// A request, from outside the sidebar's own selection (the Agents
     /// window, a newly created session), to show a window and focus one of
     /// its panes. The main window applies it to its
@@ -92,6 +96,13 @@ final class AppModel {
         self.fontSize = stored ?? Self.platformDefaultFontSize
         AppModel.current = self
         hosts.forEach(wireBrowserPruning)
+        networkMonitor.onAvailabilityChange = { [weak self] available in
+            self?.hosts.forEach { $0.networkAvailabilityChanged(available) }
+        }
+        networkMonitor.onPathChange = { [weak self] in
+            self?.hosts.forEach { $0.linkMayHaveChanged() }
+        }
+        networkMonitor.start()
     }
 
     /// Browser tabs die with their tmux session (their persisted records
@@ -118,6 +129,12 @@ final class AppModel {
         guard isSuspended else { return }
         isSuspended = false
         hosts.forEach { $0.resumeIfWanted() }
+    }
+
+    /// The Mac woke from sleep: links that look live may have died underneath
+    /// us, and pending retries needn't wait out their backoff.
+    func systemDidWake() {
+        hosts.forEach { $0.linkMayHaveChanged() }
     }
 
     /// Hosts that can currently host a new session (their link is live).
@@ -161,6 +178,7 @@ final class AppModel {
         guard !hosts.contains(where: { $0.id == host.id }) else { return nil }
         hosts.append(host)
         wireBrowserPruning(host)
+        host.networkAvailabilityChanged(networkMonitor.isAvailable)   // before start: sets the flag only
         persist()
         host.start()
         return host

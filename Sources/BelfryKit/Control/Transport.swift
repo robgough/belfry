@@ -22,6 +22,24 @@ protocol ControlChannel: AnyObject {
     func stop()
 }
 
+/// Where one terminal surface's own link stands. Separate from the host's
+/// control link: a surface can drop on its own (its TCP connection died, its
+/// tmux client was detached) while the host stays connected.
+enum SurfaceLinkState: Equatable {
+    case idle        // never started, or deliberately stopped
+    case attaching   // connect / attach in flight
+    case attached
+    case down        // dropped or failed without being asked to stop
+}
+
+/// Observable home for a workspace's `SurfaceLinkState`, for workspaces that
+/// aren't themselves `@Observable` (reads in a view body are tracked).
+@MainActor
+@Observable
+final class SurfaceLinkTracker {
+    var state: SurfaceLinkState = .idle
+}
+
 /// A live terminal surface workspace (one attached tmux session). Each
 /// workspace supplies its own renderer view: macOS uses Termini/libghostty;
 /// iOS uses a SwiftTerm-backed view over SSH (libghostty's iOS glyph pipeline
@@ -29,6 +47,9 @@ protocol ControlChannel: AnyObject {
 @MainActor
 protocol TerminalWorkspace: AnyObject {
     var terminalSize: TerminiTerminalSize? { get }
+    /// This surface's own link state (observable), driving the terminal
+    /// overlay and the store's re-attach of dropped surfaces.
+    var linkState: SurfaceLinkState { get }
     func start()
     func stop()
     func resize(columns: Int, rows: Int)

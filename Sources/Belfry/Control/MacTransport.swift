@@ -124,6 +124,16 @@ extension TmuxTransport: HostTransport {
 }
 
 extension TerminiLocalPTYWorkspace: TerminalWorkspace {
+    /// The PTY's `status` is observable; an exit code distinguishes a surface
+    /// that ran and dropped from one that never started.
+    var linkState: SurfaceLinkState {
+        switch status {
+        case .running: return .attached
+        case .failed: return .down
+        case .disconnected: return lastExitCode == nil ? .idle : .down
+        }
+    }
+
     func resize(columns: Int, rows: Int) {
         resize(to: .init(columns: columns, rows: rows))
     }
