@@ -2,6 +2,15 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.7] — 2026-10-06
+
+### Fixed
+
+- **Screenshots dragged straight from the thumbnail arrive.** Dragging the
+  floating screenshot preview onto a terminal sometimes lost the image:
+  macOS deletes its temporary copy as soon as the drag ends. Belfry now
+  keeps its own copy, so the screenshot reaches the session every time.
+
 ## [2026.10.6] — 2026-10-04
 
 ### Fixed
