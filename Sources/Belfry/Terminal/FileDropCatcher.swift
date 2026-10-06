@@ -8,7 +8,9 @@ import UniformTypeIdentifiers
 /// AppKit resolves drag destinations from registered types, not hitTest).
 ///
 /// Accepts, in order of preference:
-/// 1. File URLs (Finder, most apps) — handed over as-is.
+/// 1. File URLs (Finder, most apps) — handed over as-is, except files in
+///    temp locations (the screenshot thumbnail), which are copied before the
+///    drop returns since their source may vanish.
 /// 2. File promises (Photos, Safari, Mail, the screenshot thumbnail) —
 ///    received into a temp directory first.
 /// 3. Raw image data (image dragged out of a web page) — written to a temp
@@ -83,7 +85,7 @@ final class DropCatcherNSView: NSView {
         if let urls = pasteboard.readObjects(
             forClasses: [NSURL.self], options: Self.fileURLReadingOptions
         ) as? [URL], !urls.isEmpty {
-            onFiles?(urls)
+            onFiles?(copyTransientFiles(urls))
             return true
         }
 
@@ -107,12 +109,55 @@ final class DropCatcherNSView: NSView {
             || pasteboard.availableType(from: [.png, .tiff]) != nil
     }
 
-    // MARK: File promises
-
-    private func receivePromises(_ receivers: [NSFilePromiseReceiver]) {
+    private func makeDropDirectory() -> URL {
         let dropDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("BelfryDrop-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try? FileManager.default.createDirectory(at: dropDir, withIntermediateDirectories: true)
+        return dropDir
+    }
+
+    // MARK: File URLs
+
+    /// Copies dropped files that live in temp locations into a drop
+    /// directory we own, synchronously — performDragOperation is the only
+    /// moment such a source is guaranteed to exist. The screenshot thumbnail
+    /// hands over a file in screencaptureui's scratch directory
+    /// (…/T/TemporaryItems/NSIRD_screencaptureui_…) and deletes it as soon as
+    /// the drag ends, so a path read later (by Claude Code, or the SSH upload)
+    /// may already be gone. Files anywhere else (Finder drags) are durable and
+    /// pass through as-is, as do directories and any file whose copy fails.
+    private func copyTransientFiles(_ urls: [URL]) -> [URL] {
+        var dropDir: URL?
+        return urls.map { url in
+            guard Self.isTransient(url),
+                  (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true
+            else { return url }
+            let dir = dropDir ?? makeDropDirectory()
+            dropDir = dir
+            let copy = dir.appendingPathComponent(url.lastPathComponent)
+            do {
+                try FileManager.default.copyItem(at: url, to: copy)
+                return copy
+            } catch {
+                return url
+            }
+        }
+    }
+
+    /// Per-user temp dirs (/var/folders/…, where NSTemporaryDirectory and
+    /// TemporaryItems live) and /tmp. Both spellings are matched: /var and
+    /// /tmp are symlinks into /private, and resolvingSymlinksInPath strips a
+    /// leading /private rather than adding it.
+    private static func isTransient(_ url: URL) -> Bool {
+        let path = url.resolvingSymlinksInPath().path
+        return ["/var/folders/", "/private/var/folders/", "/tmp/", "/private/tmp/"]
+            .contains { path.hasPrefix($0) }
+    }
+
+    // MARK: File promises
+
+    private func receivePromises(_ receivers: [NSFilePromiseReceiver]) {
+        let dropDir = makeDropDirectory()
 
         // One reader callback fires per promised file; fileTypes gives the
         // expected count per receiver. The timeout covers a promiser that
