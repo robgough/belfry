@@ -40,8 +40,11 @@ echo "› $ZIP → sha256 $SHA"
 sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/"  "$CASK"
 sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"$SHA\"/"        "$CASK"
 
-# Sanity-check the result before publishing (skip if brew is absent).
+# Sanity-check the result before publishing (skip if brew is absent). Fix what
+# brew can fix first: its style rules change under us (2026.10.8's release
+# failed on a new stanza-order rule), and a cosmetic fix shouldn't stop a cask.
 if command -v brew >/dev/null; then
+    brew style --fix "$CASK" || true
     brew style "$CASK"
 fi
 
