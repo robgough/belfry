@@ -46,6 +46,9 @@ struct HeaderTitle: View {
         }
         .modifier(WidthCap(max: min(520, maxWidth)))
         .fixedSize(horizontal: false, vertical: true)
+        // The toolbar sets the item hard against the sidebar's edge; this
+        // lines the badge up with the tab track below it.
+        .padding(.leading, HeaderMetrics.leadingInset)
         .hoverHint((readout ?? staleReadout)?.hint ?? "")
         .accessibilityElement(children: .combine)
     }
@@ -241,6 +244,9 @@ enum HeaderMetrics {
     static let firstLine: CGFloat = 16
     static let secondLine: CGFloat = 14
     static let lineGap: CGFloat = 2
+    /// Added to the toolbar's own few points so the leading glyph starts
+    /// where the tab track does (it's inset 10pt from the column's edge).
+    static let leadingInset: CGFloat = 6
 }
 
 /// The facts that aren't the task, set apart from the title as two small

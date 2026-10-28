@@ -503,7 +503,8 @@ struct RootView: View {
     /// transfers button while it shows).
     private var titleMaxWidth: CGFloat {
         let buttons: CGFloat = 176 + (model.transferCenter.transfers.isEmpty ? 0 : 38)
-        let gaps: CGFloat = 28   // leading inset, a breath before the facts, trailing edge
+        // leading inset, a breath before the facts, trailing edge
+        let gaps: CGFloat = 28 + HeaderMetrics.leadingInset
         return max(140, detailWidth - factsWidth - buttons - gaps)
     }
 
