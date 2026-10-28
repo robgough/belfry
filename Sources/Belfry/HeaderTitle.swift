@@ -89,11 +89,14 @@ struct HeaderTitle: View {
     }
 
     /// The foreground command, or — at a shell prompt, where the command says
-    /// nothing — the folder you're in.
+    /// nothing — the folder you're in. A bare "~" or "/" names nothing (the
+    /// subtitle already shows the path), so those fall back to the window's
+    /// own name.
     static func plainTitle(window: TmuxWindow, fallback: String) -> String {
         let command = window.command
         if !command.isEmpty, !AgentPane.shells.contains(command) { return command }
-        return window.folder.isEmpty ? fallback : window.folder
+        let folder = window.folder
+        return folder.isEmpty || folder == "~" || folder == "/" ? fallback : folder
     }
 
     // MARK: Subtitle

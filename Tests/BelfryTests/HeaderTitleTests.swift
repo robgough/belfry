@@ -27,6 +27,7 @@ struct HeaderTitleTests {
         #expect(HeaderTitle.plainTitle(window: window(command: "nvim", path: "/src/belfry"), fallback: "x") == "nvim")
         #expect(HeaderTitle.plainTitle(window: window(command: "zsh", path: "/src/belfry"), fallback: "x") == "belfry")
         #expect(HeaderTitle.plainTitle(window: window(command: "-bash", path: ""), fallback: "main · zsh") == "main · zsh")
+        #expect(HeaderTitle.plainTitle(window: window(command: "zsh", path: NSHomeDirectory()), fallback: "main") == "main")
     }
 
     @Test func activityFallsBackToTheStateInWords() throws {
