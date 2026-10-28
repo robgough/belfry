@@ -19,15 +19,13 @@ struct HeaderTitle: View {
     let staleReadout: WindowReadout?
     let staleWord: String
     let window: TmuxWindow?
+    /// The window's primary agent (nil when there's none to speak of).
+    let agent: AgentPane?
     let folderURL: URL?
     /// The branch, when the window is too narrow for `HeaderFacts` — it's the
     /// one fact worth keeping at any width.
     let inlineBranch: String?
 
-    private var agent: AgentPane? {
-        guard let agent = window?.primaryAgent, agent.state != .none else { return nil }
-        return agent
-    }
 
     var body: some View {
         HStack(spacing: 9) {

@@ -387,9 +387,10 @@ struct RootView: View {
             staleReadout: staleReadout,
             staleWord: staleStatusWord,
             window: selectedWindow,
+            agent: headerAgent,
             folderURL: localFolderURL,
             inlineBranch: headerLayout.showsFacts
-                ? nil : HeaderFacts.branch(git: git?.overview, agent: selectedWindow?.primaryAgent))
+                ? nil : HeaderFacts.branch(git: headerGit, agent: headerAgent))
     }
 
     /// The selected window's working directory, when it's on this Mac and the
@@ -438,8 +439,25 @@ struct RootView: View {
         }
     }
 
+    /// The selected window's primary agent, when it has one worth showing
+    /// (or the staged demo agent in debug builds).
+    private var headerAgent: AgentPane? {
+        #if DEBUG
+        if let demo = HeaderDemo.agent { return demo }
+        #endif
+        guard let agent = selectedWindow?.primaryAgent, agent.state != .none else { return nil }
+        return agent
+    }
+
+    private var headerGit: GitOverview? {
+        #if DEBUG
+        if let demo = HeaderDemo.git { return demo }
+        #endif
+        return git?.overview
+    }
+
     private var headerFacts: some View {
-        HeaderFacts(git: git?.overview, agent: selectedWindow?.primaryAgent,
+        HeaderFacts(git: headerGit, agent: headerAgent,
                     showsAgentColumn: headerLayout.showsAgentColumn)
     }
 
