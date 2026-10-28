@@ -181,8 +181,13 @@ private struct TrackTab: View {
         .onHover { over in withAnimation(.easeOut(duration: 0.12)) { hovering = over } }
         .foregroundStyle(isActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .help(title)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { onSelect() }
+        .accessibilityActions {
+            if let onClose { Button("Close Tab", action: onClose) }
+        }
     }
 }
 

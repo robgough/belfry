@@ -289,7 +289,7 @@ struct HeaderFacts: View {
                 // Middle truncation keeps both a prefix like "rob/" and the
                 // distinguishing tail of a long branch name.
                 Text(branch)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .modifier(WidthCap(max: layout.branchMaxWidth))

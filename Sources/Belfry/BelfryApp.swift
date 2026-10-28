@@ -330,12 +330,12 @@ struct RootView: View {
             // Removing the native title also removes the flexible space it
             // brought; reinstate it so the trailing items stay trailing.
             ToolbarSpacer(.flexible)
-            ToolbarItem(placement: .primaryAction) { headerFacts }
-                .sharedBackgroundVisibility(.hidden)
-            ToolbarSpacer(.fixed, placement: .primaryAction)
         } else {
             ToolbarItem(placement: .navigation) { titleReadout }
-            ToolbarItem(placement: .primaryAction) { headerFacts }
+        }
+        factsItem
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
@@ -389,6 +389,25 @@ struct RootView: View {
             .disabled(selection == nil)
             .keyboardShortcut("i", modifiers: [.command, .option])
             .help("Browse the selected window's working directory (⌥⌘I)")
+        }
+    }
+
+    /// The facts, as a different toolbar item for each layout. An
+    /// NSToolbarItem grows with its SwiftUI content but doesn't shrink back:
+    /// one item across layouts kept the agent column's width after the
+    /// column dropped out on a narrowing window, leaving a gap and pushing
+    /// the buttons into the » menu. A new item per layout is measured fresh.
+    @ToolbarContentBuilder private var factsItem: some ToolbarContent {
+        switch headerLayout {
+        case .full:
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+                .hidingSharedBackground()
+        case .git:
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+                .hidingSharedBackground()
+        case .compact:
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+                .hidingSharedBackground()
         }
     }
 
@@ -473,6 +492,7 @@ struct RootView: View {
 
     private var headerLayout: HeaderLayout { HeaderLayout(width: detailWidth) }
 
+
     /// What's left for the title once the trailing items have their room.
     /// NSToolbar gives a SwiftUI item its ideal width and, when the row runs
     /// out, pushes whole items into the » menu rather than squeezing any —
@@ -545,6 +565,18 @@ struct RootView: View {
             Image(systemName: "plus")
         }
         .menuIndicator(.hidden)
+    }
+}
+
+private extension ToolbarContent {
+    /// No glass capsule behind an item that isn't a control (macOS 26+).
+    @ToolbarContentBuilder
+    func hidingSharedBackground() -> some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
     }
 }
 
