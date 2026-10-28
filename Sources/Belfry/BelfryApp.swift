@@ -171,15 +171,9 @@ struct RootView: View {
         return "reconnecting…"
     }
 
-    /// The web tab the detail pane is showing, when the selected session's
-    /// strip isn't on the terminal — the title bar shows the page, not tmux.
-    private var activeWebTab: BrowserTab? {
-        model.browserTabs.activeWebTab
-    }
-
+    /// The session, whichever tab is showing: the tab strip names the page.
     private var windowTitle: String {
-        if let tab = activeWebTab { return tab.displayTitle }
-        return readout?.primary ?? staleReadout?.primary ?? "Belfry"
+        readout?.primary ?? staleReadout?.primary ?? "Belfry"
     }
 
     @ViewBuilder private var sidebar: some View {
@@ -393,7 +387,6 @@ struct RootView: View {
             staleReadout: staleReadout,
             staleWord: staleStatusWord,
             window: selectedWindow,
-            webTab: activeWebTab,
             folderURL: localFolderURL,
             inlineBranch: headerLayout.showsFacts
                 ? nil : HeaderFacts.branch(git: git?.overview, agent: selectedWindow?.primaryAgent))

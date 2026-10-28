@@ -4,7 +4,9 @@ import SwiftUI
 /// is. With a coding agent: its braille badge, its task as the title, and what
 /// it's doing right now (plus how long, how many steps, how many sub-agents)
 /// underneath. Without one: the running command — or, at a shell prompt, the
-/// folder — over the tinted host and path. Facts that aren't about the task
+/// folder — over the tinted host and path. It stays on the session while a
+/// web tab is showing: the tab strip names the page, and the header is what
+/// tells you which project you're in. Facts that aren't about the task
 /// (branch, diff, model, context) sit apart in `HeaderFacts`.
 ///
 /// The task and activity texts are hook-reported and can change many times a
@@ -17,7 +19,6 @@ struct HeaderTitle: View {
     let staleReadout: WindowReadout?
     let staleWord: String
     let window: TmuxWindow?
-    let webTab: BrowserTab?
     let folderURL: URL?
     /// The branch, when the window is too narrow for `HeaderFacts` — it's the
     /// one fact worth keeping at any width.
@@ -52,11 +53,7 @@ struct HeaderTitle: View {
     // MARK: Leading glyph
 
     @ViewBuilder private var leading: some View {
-        if webTab != nil {
-            Image(systemName: "globe")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-        } else if let agent {
+        if let agent {
             AgentBadge(state: agent.state, kind: agent.kind, title: agent.name,
                        unseen: agent.finishedUnseen, glyphPointSize: 19)
         } else if let folderURL {
@@ -75,9 +72,7 @@ struct HeaderTitle: View {
     // MARK: Title
 
     @ViewBuilder private var title: some View {
-        if let webTab {
-            Text(webTab.displayTitle)
-        } else if let agent {
+        if let agent {
             SettledText(value: agent.task.isEmpty ? agent.kind.displayName : agent.task,
                         mode: .settle(.seconds(2)))
                 .id(window?.id)
@@ -102,9 +97,7 @@ struct HeaderTitle: View {
     // MARK: Subtitle
 
     @ViewBuilder private var subtitle: some View {
-        if let webTab {
-            if let url = webTab.url { Text(url.absoluteString) }
-        } else if let agent {
+        if let agent {
             HStack(spacing: 0) {
                 SettledText(value: Self.activity(agent), mode: .throttle(.milliseconds(1500)))
                     .foregroundStyle(Self.activityStyle(agent))
