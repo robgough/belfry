@@ -128,7 +128,8 @@ struct RootView: View {
     @State private var showsFilePane = false
     @State private var closeTabKeyMonitor: Any?
     @State private var git: HeaderGit?
-    /// The detail column's width, which decides how much of the header fits.
+    /// The detail column's toolbar width (inspector included), which decides
+    /// how much of the header fits.
     @State private var detailWidth: CGFloat = 1000
     /// The facts' own width as laid out, so the title knows what's left.
     @State private var factsWidth: CGFloat = 0
@@ -216,18 +217,19 @@ struct RootView: View {
                 .toolbarBackground(.hidden, for: .windowToolbar)
                 .terminalAttachments(hosts: model.hosts, selection: selection,
                                      openPanelRequest: attachRequest)
-                // Track the detail column's own width (inside the inspector,
-                // which takes its toolbar space with it) so the header's facts
-                // can drop out before they'd crowd the title.
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
-                    detailWidth = $0
-                }
                 // The file pane rides in an inspector so the warm terminal
                 // surfaces stay mounted beside it, never re-parented.
                 .inspector(isPresented: $showsFilePane) {
                     FileBrowserPane(hosts: model.hosts, selection: selection,
                                     transferCenter: model.transferCenter)
                         .inspectorColumnWidth(min: 260, ideal: 320, max: 560)
+                }
+                // Track the width the detail's toolbar spans — the inspector's
+                // too, since the trailing items move over it when it opens —
+                // so the header's facts can drop out before they'd crowd the
+                // title.
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    detailWidth = $0
                 }
                 .task(id: gitPollKey) { await pollGit() }
                 .toolbar { detailToolbar }
