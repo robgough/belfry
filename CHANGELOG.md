@@ -2,6 +2,22 @@
 
 All notable changes to Belfry are documented here.
 
+## [2026.10.8] — 2026-10-28
+
+### Changed
+
+- **A new window header that says what the window is doing.** When an
+  agent is running, its braille badge and task are the title, with what
+  it's doing now, how long it's been at it, its steps and its sub-agents
+  underneath. Otherwise the title is the running command, or the folder
+  you're in. The git branch sits alongside at every window size, with
+  the diff and how far ahead or behind you are; wider windows add the
+  model, effort, context in use and permission mode.
+- **The header stays on the session when you switch to a web tab.** The
+  tab strip names the page; the header no longer changes with it.
+- **Tidier toolbar.** The buttons sit in grouped glass controls, and web
+  tabs use a track that matches macOS's own window tabs.
+
 ## [2026.10.7] — 2026-10-06
 
 ### Fixed
