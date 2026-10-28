@@ -325,8 +325,16 @@ struct RootView: View {
         if #available(macOS 26.0, *) {
             // No glass capsule behind the readout or the facts — they're a
             // title and its annotations, not controls.
-            ToolbarItem(placement: .navigation) { titleReadout }
-                .sharedBackgroundVisibility(.hidden)
+            // A fresh item each 40pt step: the toolbar sizes an item when
+            // it arrives and only ever squeezes it after, so a title that
+            // truncated on a narrowing window never got its room back.
+            if titleStep {
+                ToolbarItem(placement: .navigation) { titleReadout }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .navigation) { titleReadout }
+                    .sharedBackgroundVisibility(.hidden)
+            }
             // Removing the native title also removes the flexible space it
             // brought; reinstate it so the trailing items stay trailing.
             ToolbarSpacer(.flexible)
@@ -491,6 +499,10 @@ struct RootView: View {
     }
 
     private var headerLayout: HeaderLayout { HeaderLayout(width: detailWidth) }
+
+    /// Flips every 40pt of column width (see `detailToolbar`). It keys off
+    /// the column, never the toolbar's contents, so it can't feed back.
+    private var titleStep: Bool { Int(detailWidth / 40).isMultiple(of: 2) }
 
 
     /// What's left for the title once the trailing items have their room.
