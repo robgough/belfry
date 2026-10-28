@@ -1587,7 +1587,7 @@ struct AgentBadge: View {
     var title: String = ""
     /// Finished while you weren't looking (see `AgentPane.finishedUnseen`).
     var unseen = false
-    private let glyphPointSize: CGFloat = 14
+    var glyphPointSize: CGFloat = 14
     var body: some View {
         let name = kind.displayName
         switch state {

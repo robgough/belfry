@@ -127,6 +127,13 @@ struct RootView: View {
     @State private var lastReadout: CachedReadout?
     @State private var showsFilePane = false
     @State private var closeTabKeyMonitor: Any?
+    @State private var git: HeaderGit?
+    @State private var headerLayout = HeaderLayout.full
+
+    private struct HeaderGit: Equatable {
+        let directory: String
+        let overview: GitOverview
+    }
 
     private struct CachedReadout: Equatable {
         let selection: WindowSelection
@@ -175,19 +182,6 @@ struct RootView: View {
         return readout?.primary ?? staleReadout?.primary ?? "Belfry"
     }
 
-    /// The readout's second line, with the machine name tinted local/remote —
-    /// the reason the visible title is custom: NSWindow.subtitle is a plain
-    /// string, so a native subtitle can't carry the colour.
-    private var secondaryLine: Text? {
-        if let tab = activeWebTab {
-            guard let url = tab.url else { return nil }
-            return Text(url.absoluteString)
-        }
-        if let readout { return readout.secondaryText }
-        if let stale = staleReadout { return stale.secondaryText + Text(" — \(staleStatusWord)") }
-        return nil
-    }
-
     @ViewBuilder private var sidebar: some View {
         #if DEBUG
         if SidebarLab.isOn {
@@ -229,7 +223,24 @@ struct RootView: View {
                                     transferCenter: model.transferCenter)
                         .inspectorColumnWidth(min: 260, ideal: 320, max: 560)
                 }
+                // Track the detail width so the header's facts can drop out
+                // column by column before they'd crowd the title.
+                .onGeometryChange(for: HeaderLayout.self) { HeaderLayout(width: $0.size.width) } action: {
+                    headerLayout = $0
+                }
+                .task(id: gitPollKey) { await pollGit() }
                 .toolbar {
+                    // Branch, changes, model, context: the facts that aren't the
+                    // task, apart from the title and ahead of the buttons. Plain
+                    // text, so no glass capsule behind it.
+                    if headerLayout.showsFacts {
+                        if #available(macOS 26.0, *) {
+                            ToolbarItem(placement: .primaryAction) { headerFacts }
+                                .sharedBackgroundVisibility(.hidden)
+                        } else {
+                            ToolbarItem(placement: .primaryAction) { headerFacts }
+                        }
+                    }
                     // The tab strip only appears once a session has web tabs,
                     // so this is the discoverable way into the first one.
                     ToolbarItem(placement: .primaryAction) {
@@ -245,32 +256,38 @@ struct RootView: View {
                         Button {
                             openWindow(id: "agents")
                         } label: {
-                            Label("Agents", systemImage: "list.bullet.rectangle")
+                            // Belfry's own mark: the braille cell every agent
+                            // badge is drawn from.
+                            Label {
+                                Text("Agents")
+                            } icon: {
+                                Text("⣿").font(.system(size: 16, design: .monospaced))
+                            }
                         }
                         .help("Every agent at a glance (⇧⌘A)")
                     }
                     ToolbarItem(placement: .primaryAction) {
                         TransfersButton(center: model.transferCenter)
                     }
+                    // The files inspector stands apart, as the trailing
+                    // sidebar toggle does in Finder and Xcode.
+                    if #available(macOS 26.0, *) {
+                        ToolbarSpacer(.fixed, placement: .primaryAction)
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             showsFilePane.toggle()
                         } label: {
-                            Label("Files", systemImage: "folder")
+                            Label("Files", systemImage: "sidebar.right")
                         }
                         .disabled(selection == nil)
                         .keyboardShortcut("i", modifiers: [.command, .option])
                         .help("Browse the selected window's working directory (⌥⌘I)")
                     }
                 }
-                // The jump bar (a menu of every window on every host) and the
-                // now-playing readout that stands in for the native title:
-                // title-styled two-line text with the host name tinted and the
-                // live Claude chip inside the same item, so badge and label
-                // share one toolbar bubble instead of the chip floating in its
-                // own glass capsule.
+                // The readout that stands in for the native title (see
+                // `HeaderTitle`): badge, task and live activity in one item.
                 .toolbar {
-                    ToolbarItem(placement: .navigation) { windowSwitcher }
                     // No glass capsule behind the readout — it's a title, not
                     // a control, and the chip was clipping against the bubble.
                     if #available(macOS 26.0, *) {
@@ -371,56 +388,15 @@ struct RootView: View {
     /// Claude chip in the same bubble. Local windows keep the proxy-icon
     /// affordance as a draggable folder icon.
     private var titleReadout: some View {
-        HStack(spacing: 8) {
-            if activeWebTab != nil {
-                // Browsing: the title is the page, so the cwd folder icon
-                // would mislead — but the Claude chip stays (glanceable
-                // session state is exactly why the browser lives in a tab).
-                Image(systemName: "globe")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            } else if let url = localFolderURL {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                    .resizable()
-                    .frame(width: 17, height: 17)
-                    .onDrag { NSItemProvider(object: url as NSURL) }
-                    .hoverHint("Working directory — drag to copy the folder")
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(windowTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let secondaryLine {
-                    secondaryLine
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            if let agent = readout?.agent {
-                AgentBadge(state: agent.state, kind: agent.kind, title: agent.name,
-                           unseen: agent.unseen)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        // The LCD: the old lozenge's rounded panel, drawn ourselves (the
-        // system glass capsule is hidden) so it reads as a readout, not a
-        // button, and the chip gets real padding instead of clipping.
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(AppTheme.sidebarPanel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 1)
-        )
-        .frame(maxWidth: 460)
-        .fixedSize(horizontal: false, vertical: true)
-        .hoverHint((readout ?? staleReadout)?.hint ?? "")
-        .accessibilityElement(children: .combine)
+        HeaderTitle(
+            readout: readout,
+            staleReadout: staleReadout,
+            staleWord: staleStatusWord,
+            window: selectedWindow,
+            webTab: activeWebTab,
+            folderURL: localFolderURL,
+            inlineBranch: headerLayout.showsFacts
+                ? nil : HeaderFacts.branch(git: git?.overview, agent: selectedWindow?.primaryAgent))
     }
 
     /// The selected window's working directory, when it's on this Mac and the
@@ -433,51 +409,45 @@ struct RootView: View {
         return URL(fileURLWithPath: current.currentPath)
     }
 
-    /// The jump bar: a menu of every window on every host, labelled with the
-    /// selected window's live Claude chip (a plain stack icon when Claude
-    /// isn't running there). A Picker gives the native checkmark on the
-    /// current window; choosing another entry is exactly a sidebar click.
-    private var windowSwitcher: some View {
-        Menu {
-            Picker("Window", selection: $selection) {
-                ForEach(model.hosts) { host in
-                    if !host.store.sessions.isEmpty {
-                        Section(host.displayName) {
-                            ForEach(host.store.sessions) { session in
-                                ForEach(session.windows) { window in
-                                    Text(switcherLabel(session: session, window: window))
-                                        .tag(Optional(WindowSelection(hostID: host.id, windowID: window.id)))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            if model.hosts.allSatisfy({ $0.store.sessions.isEmpty }) {
-                Text("No windows")
-            }
-        } label: {
-            Image(systemName: "rectangle.stack")
+    /// The selected window itself, joined against live tmux state.
+    private var selectedWindow: TmuxWindow? {
+        guard let sel = selection, let host = selectedHost else { return nil }
+        for session in host.store.sessions {
+            if let window = session.windows.first(where: { $0.id == sel.windowID }) { return window }
         }
-        .hoverHint("Jump to a window")
+        return nil
     }
 
-    private func switcherLabel(session: TmuxSession, window: TmuxWindow) -> String {
-        let name = window.name.isEmpty ? "window \(window.index)" : window.name
-        var label = name == session.name ? name : "\(session.name) · \(name)"
-        // Live agent state as a plain word — menu items can't carry the
-        // coloured braille chip.
-        switch window.agentState {
-        case .none, .running: break
-        case .working:    label += " — working"
-        case .background: label += " — background"
-        case .idle:       label += " — idle"
-        case .waiting:    label += " — waiting"
-        case .error:      label += " — error"
+    /// Re-runs the git poll whenever the window, its directory, or its agent's
+    /// state changes — a turn ending is exactly when the branch or the
+    /// working tree is likely to have moved.
+    private var gitPollKey: String? {
+        guard let sel = selection, let window = selectedWindow, !window.currentPath.isEmpty
+        else { return nil }
+        return "\(sel.hostID)|\(window.currentPath)|\(window.agentState)"
+    }
+
+    /// The selected window's repo overview for the header: fetched at once,
+    /// then refreshed on a slow timer (slower over ssh). Kept per directory,
+    /// so switching windows never shows the previous one's branch.
+    private func pollGit() async {
+        guard let host = selectedHost, let window = selectedWindow,
+              let browser = host.transport.makeFileBrowser()
+        else { git = nil; return }
+        let directory = "\(host.id)|\(window.currentPath)"
+        if git?.directory != directory { git = nil }
+        let interval: Duration = host.transport.isLocal ? .seconds(10) : .seconds(30)
+        while !Task.isCancelled {
+            let overview = (try? await browser.gitOverview(directory: window.currentPath)) ?? nil
+            guard !Task.isCancelled else { return }
+            git = overview.map { HeaderGit(directory: directory, overview: $0) }
+            try? await Task.sleep(for: interval)
         }
-        return label
+    }
+
+    private var headerFacts: some View {
+        HeaderFacts(git: git?.overview, agent: selectedWindow?.primaryAgent,
+                    showsAgentColumn: headerLayout.showsAgentColumn)
     }
 
     /// Local windows get their working directory as the title-bar proxy icon:

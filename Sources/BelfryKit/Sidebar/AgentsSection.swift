@@ -451,7 +451,7 @@ struct ElapsedText: View {
 }
 
 /// How a permission mode reads in the meta line (default mode shows nothing).
-private struct ModeStyle {
+struct ModeStyle {
     let label: String
     let color: Color
 
