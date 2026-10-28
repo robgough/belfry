@@ -128,7 +128,10 @@ struct RootView: View {
     @State private var showsFilePane = false
     @State private var closeTabKeyMonitor: Any?
     @State private var git: HeaderGit?
-    @State private var headerLayout = HeaderLayout.full
+    /// The detail column's width, which decides how much of the header fits.
+    @State private var detailWidth: CGFloat = 1000
+    /// The facts' own width as laid out, so the title knows what's left.
+    @State private var factsWidth: CGFloat = 0
     /// Bumped by the paperclip button; `terminalAttachments` opens its panel.
     @State private var attachRequest = 0
 
@@ -216,8 +219,8 @@ struct RootView: View {
                 // Track the detail column's own width (inside the inspector,
                 // which takes its toolbar space with it) so the header's facts
                 // can drop out before they'd crowd the title.
-                .onGeometryChange(for: HeaderLayout.self) { HeaderLayout(width: $0.size.width) } action: {
-                    headerLayout = $0
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    detailWidth = $0
                 }
                 // The file pane rides in an inspector so the warm terminal
                 // surfaces stay mounted beside it, never re-parented.
@@ -327,6 +330,7 @@ struct RootView: View {
             ToolbarSpacer(.flexible)
             ToolbarItem(placement: .primaryAction) { headerFacts }
                 .sharedBackgroundVisibility(.hidden)
+            ToolbarSpacer(.fixed, placement: .primaryAction)
         } else {
             ToolbarItem(placement: .navigation) { titleReadout }
             ToolbarItem(placement: .primaryAction) { headerFacts }
@@ -398,7 +402,8 @@ struct RootView: View {
             staleWord: staleStatusWord,
             window: selectedWindow,
             agent: headerAgent,
-            folderURL: localFolderURL)
+            folderURL: localFolderURL,
+            maxWidth: titleMaxWidth)
     }
 
     /// The selected window's working directory, when it's on this Mac and the
@@ -464,8 +469,25 @@ struct RootView: View {
         return git?.overview
     }
 
+    private var headerLayout: HeaderLayout { HeaderLayout(width: detailWidth) }
+
+    /// What's left for the title once the trailing items have their room.
+    /// NSToolbar gives a SwiftUI item its ideal width and, when the row runs
+    /// out, pushes whole items into the » menu rather than squeezing any —
+    /// so without a cap a long task title shoved the branch and every
+    /// button off the toolbar on a narrow window. Capped, the title truncates
+    /// instead. The buttons' width is AppKit's to decide, so it's measured
+    /// off the toolbar once (four glass buttons in three groups, plus the
+    /// transfers button while it shows).
+    private var titleMaxWidth: CGFloat {
+        let buttons: CGFloat = 176 + (model.transferCenter.transfers.isEmpty ? 0 : 38)
+        let gaps: CGFloat = 28   // leading inset, a breath before the facts, trailing edge
+        return max(140, detailWidth - factsWidth - buttons - gaps)
+    }
+
     private var headerFacts: some View {
         HeaderFacts(git: headerGit, agent: headerAgent, layout: headerLayout)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { factsWidth = $0 }
     }
 
     /// Local windows get their working directory as the title-bar proxy icon:

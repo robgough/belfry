@@ -230,6 +230,32 @@ private struct NewTabButton: View {
     }
 }
 
+/// A borderless round chrome button the size of the tab track, lit only
+/// under the pointer — tighter than `.accessoryBar`, whose own padding
+/// spread back/forward/reload a thumb's width apart.
+private struct ChromeButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ChromeButton(configuration: configuration)
+    }
+
+    private struct ChromeButton: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(.secondary)
+                .frame(width: TabMetrics.trackHeight, height: TabMetrics.trackHeight)
+                .background(Circle().fill(Color.primary.opacity(
+                    configuration.isPressed ? 0.14 : hovering && isEnabled ? 0.07 : 0)))
+                .contentShape(Circle())
+                .opacity(isEnabled ? 1 : 0.4)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
 /// Back/forward/reload and the address field for the active web tab.
 private struct WebChromeRow: View {
     let store: BrowserTabStore
@@ -240,7 +266,7 @@ private struct WebChromeRow: View {
     @FocusState private var urlFocused: Bool
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             navButton("chevron.left", help: "Back", disabled: !tab.canGoBack) {
                 tab.webView?.goBack()
             }
@@ -254,13 +280,28 @@ private struct WebChromeRow: View {
             }
             ProfileMenu(store: store, key: key, tab: tab)
             Spacer(minLength: 12)
-            TextField("Search or enter website name", text: $urlText)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.large)
-                .font(.system(size: 13))
-                .frame(maxWidth: 640)
-                .focused($urlFocused)
-                .onSubmit(navigate)
+            // The address field wears the tab track's capsule, so the two
+            // rows of browser chrome read as one family.
+            HStack(spacing: 6) {
+                Image(systemName: urlFocused || tab.url == nil ? "magnifyingglass" : "globe")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                TextField("Search or enter website name", text: $urlText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($urlFocused)
+                    .onSubmit(navigate)
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: 640)
+            .frame(height: TabMetrics.trackHeight)
+            .background(TrackBackground())
+            .overlay(
+                Capsule()
+                    .strokeBorder(AppTheme.accent.opacity(urlFocused ? 0.7 : 0), lineWidth: 1.5)
+            )
+            .contentShape(Capsule())
+            .onTapGesture { urlFocused = true }
             Spacer(minLength: 12)
             navButton("chevron.left.forwardslash.chevron.right",
                       help: "Open Web Inspector", disabled: tab.webView == nil) {
@@ -330,10 +371,8 @@ private struct WebChromeRow: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .medium))
-                .frame(width: 30, height: 26)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.accessoryBar)
+        .buttonStyle(ChromeButtonStyle())
         .disabled(disabled)
         .help(help)
     }
@@ -471,7 +510,7 @@ private struct ProfileMenu: View {
                     .font(.system(size: 12))
             }
             .padding(.horizontal, 6)
-            .frame(height: 26)
+            .frame(height: TabMetrics.trackHeight)
             .contentShape(Rectangle())
         }
         .menuStyle(.button)

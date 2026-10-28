@@ -22,6 +22,8 @@ struct HeaderTitle: View {
     /// The window's primary agent (nil when there's none to speak of).
     let agent: AgentPane?
     let folderURL: URL?
+    /// The room the toolbar has left for it (see `RootView.titleMaxWidth`).
+    var maxWidth: CGFloat = 520
 
     var body: some View {
         HStack(spacing: 9) {
@@ -36,11 +38,13 @@ struct HeaderTitle: View {
                     .font(HeaderMetrics.secondFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    // Activities and paths keep their ends: the file being
+                    // edited, the folder you're in.
+                    .truncationMode(.middle)
                     .frame(height: HeaderMetrics.secondLine)
             }
         }
-        .frame(maxWidth: 520, alignment: .leading)
+        .modifier(WidthCap(max: min(520, maxWidth)))
         .fixedSize(horizontal: false, vertical: true)
         .hoverHint((readout ?? staleReadout)?.hint ?? "")
         .accessibilityElement(children: .combine)
@@ -94,12 +98,19 @@ struct HeaderTitle: View {
 
     @ViewBuilder private var subtitle: some View {
         if let agent {
+            // The activity has first claim on the line; the progress after it
+            // sheds its parts (steps and agents, then the clock) as room runs
+            // out, rather than shoving the activity off the line.
             HStack(spacing: 0) {
                 SettledText(value: Self.activity(agent), mode: .throttle(.milliseconds(1500)))
                     .foregroundStyle(Self.activityStyle(agent))
                     .id(window?.id)
-                AgentProgressText(agent: agent)
-                    .fixedSize()
+                    .layoutPriority(1)
+                ViewThatFits(in: .horizontal) {
+                    AgentProgressText(agent: agent, detail: .full)
+                    AgentProgressText(agent: agent, detail: .elapsed)
+                    Color.clear.frame(width: 0, height: 0)
+                }
             }
         } else if let readout {
             readout.secondaryText
@@ -139,7 +150,10 @@ struct HeaderTitle: View {
 /// this state and the size of the job. Ticks once a second only while there's
 /// a clock worth watching (busy or waiting); otherwise it's static.
 private struct AgentProgressText: View {
+    enum Detail { case full, elapsed }
+
     let agent: AgentPane
+    let detail: Detail
 
     var body: some View {
         if let since = agent.since, agent.state.isBusy || agent.state.needsAttention {
@@ -154,7 +168,7 @@ private struct AgentProgressText: View {
     private func line(elapsed: TimeInterval?) -> Text {
         var parts: [String] = []
         if let elapsed { parts.append(Self.format(elapsed)) }
-        if agent.state.isBusy {
+        if detail == .full, agent.state.isBusy {
             if agent.steps > 0 { parts.append("\(agent.steps) step\(agent.steps == 1 ? "" : "s")") }
             if agent.subagents > 0, agent.state == .working {
                 parts.append("\(agent.subagents) agent\(agent.subagents == 1 ? "" : "s")")
