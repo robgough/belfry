@@ -2,17 +2,23 @@
 import SwiftUI
 import WebKit
 
-/// The per-session tab strip along the top of the detail pane. Safari's
-/// layout — equal-width tabs that squeeze (never scroll), centred titles,
-/// close-on-hover at the leading edge — drawn in the app's ghostty-derived
-/// theme so it reads as part of Belfry, not a foreign toolbar. The terminal
-/// rides as a narrow pinned-style first tab. Rendered only when the session
-/// has web tabs, so pure-terminal sessions pay zero chrome tax.
+/// The per-session tab strip along the top of the detail pane, drawn the way
+/// macOS 26 draws a window's own tabs (Finder, Terminal): one full-width
+/// capsule track straight under the toolbar, equal-width tabs that squeeze
+/// (never scroll) with centred titles, the selected tab a raised glass pill
+/// that slides between them, hairlines only between unselected neighbours,
+/// and close-on-hover at the leading edge. Sitting flush under the toolbar on
+/// the same surface, it reads as the toolbar's second row rather than a band
+/// of its own. The terminal rides as the first tab. Rendered only when the
+/// session has web tabs, so pure-terminal sessions pay zero chrome tax.
 struct BrowserTabStrip: View {
     let store: BrowserTabStore
     let key: BrowserTabStore.SessionKey
     /// Refocus the terminal surface when its tab is chosen.
     let onSelectTerminal: () -> Void
+
+    @Namespace private var pill
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,63 +26,113 @@ struct BrowserTabStrip: View {
             if let tab = store.activeWebTab(for: key) {
                 WebChromeRow(store: store, key: key, tab: tab)
             }
-            Divider()
         }
         .background(AppTheme.windowBackground)
     }
 
+    /// Position of the selected tab: 0 is the terminal, then the web tabs.
+    private var activeIndex: Int {
+        guard let active = store.activeWebTab(for: key)?.id else { return 0 }
+        return (store.tabs(for: key).firstIndex { $0.id == active } ?? -1) + 1
+    }
+
     private var tabRow: some View {
         let tabs = store.tabs(for: key)
-        return HStack(spacing: 4) {
-            NativeTab(
-                title: "Terminal",
-                systemImage: "terminal",
-                isActive: store.isTerminalActive(for: key),
-                flexible: false,
-                onSelect: onSelectTerminal)
-            HStack(spacing: 4) {
-                ForEach(tabs) { tab in
-                    NativeTab(
+        let active = activeIndex
+        return HStack(spacing: 8) {
+            HStack(spacing: 0) {
+                TrackTab(
+                    title: "Terminal",
+                    systemImage: "terminal",
+                    isActive: active == 0,
+                    pill: pill,
+                    onSelect: onSelectTerminal)
+                ForEach(Array(tabs.enumerated()), id: \.element.id) { offset, tab in
+                    // Between tabs `offset` and `offset + 1` (0 = terminal);
+                    // the selected pill needs no line beside it.
+                    TabSeparator(isHidden: active == offset || active == offset + 1)
+                    TrackTab(
                         title: tab.displayTitle,
                         systemImage: "globe",
                         isLoading: tab.isLoading,
-                        isActive: store.activeWebTab(for: key)?.id == tab.id,
+                        isActive: active == offset + 1,
                         badgeColor: tab.profileID.map { store.profiles.dotColor(for: $0) },
+                        pill: pill,
                         onSelect: { store.setActive(.web(tab.id), for: key) },
                         onClose: { store.close(tab.id, for: key) })
                 }
             }
-            // Safari sizing: tabs share the row equally up to a cap, and
-            // compress together (titles truncate) instead of scrolling.
-            .frame(maxWidth: CGFloat(tabs.count) * 200, alignment: .leading)
-            Button {
-                store.openTab(for: key)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(width: 26, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.accessoryBar)
-            .help("New browser tab (⌘T)")
-            Spacer(minLength: 0)
+            .padding(TabMetrics.inset)
+            .background(TrackBackground())
+            NewTabButton { store.openTab(for: key) }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85), value: active)
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85), value: tabs.map(\.id))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
     }
 }
 
-/// One tab: centred icon+title, themed hover/active background (the same
-/// panel treatment as the title-bar readout), the close button fading in at
-/// the leading edge on hover.
-private struct NativeTab: View {
+/// The native tab bar's proportions: a 28pt track whose pill sits 2pt in.
+private enum TabMetrics {
+    static let trackHeight: CGFloat = 28
+    static let inset: CGFloat = 2
+    static var pillHeight: CGFloat { trackHeight - 2 * inset }
+}
+
+/// The recessed capsule all the tabs share — a faint lift off the window
+/// colour with a hairline along its top edge, as AppKit's tab bar has.
+private struct TrackBackground: View {
+    var body: some View {
+        Capsule()
+            .fill(Color.primary.opacity(0.085))
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0.03)],
+                                       startPoint: .top, endPoint: .bottom),
+                        lineWidth: 0.5)
+            )
+    }
+}
+
+/// The hairline between two unselected tabs.
+private struct TabSeparator: View {
+    let isHidden: Bool
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(isHidden ? 0 : 0.14))
+            .frame(width: 1, height: 14)
+    }
+}
+
+/// The selected tab's raised pill: Liquid Glass on macOS 26, where the
+/// toolbar's buttons wear the same; a lit capsule before it.
+private struct SelectedPill: View {
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            Capsule()
+                .fill(.clear)
+                .glassEffect(.regular, in: Capsule())
+        } else {
+            Capsule()
+                .fill(Color.primary.opacity(0.10))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
+        }
+    }
+}
+
+/// One tab: centred icon and title, the close button fading in at the
+/// leading edge on hover, a faint hover wash on unselected tabs.
+private struct TrackTab: View {
     let title: String
     let systemImage: String
     var isLoading = false
     let isActive: Bool
     /// Profile tint dot; nil for the default profile (no dot).
     var badgeColor: Color? = nil
-    var flexible = true
+    let pill: Namespace.ID
     let onSelect: () -> Void
     var onClose: (() -> Void)? = nil
 
@@ -98,42 +154,79 @@ private struct NativeTab: View {
                     .frame(width: 6, height: 6)
             }
             Text(title)
-                .font(.system(size: 12))
+                .font(.system(size: 12, weight: isActive ? .medium : .regular))
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .padding(.horizontal, 22)   // keeps the title clear of the close button
-        .frame(maxWidth: flexible ? .infinity : nil)
-        .frame(height: 26)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? AppTheme.sidebarPanel
-                      : hovering ? AppTheme.sidebarPanel.opacity(0.5) : .clear)
-        )
-        .overlay(
-            // The same hairline the title-bar readout wears, so active-tab
-            // and readout read as one family of panels.
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(isActive ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-                              lineWidth: 1)
-        )
-        .overlay(alignment: .leading) {
-            if let onClose, hovering {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .padding(.leading, 7)
-                .help("Close tab (⌘W)")
+        .padding(.horizontal, 26)   // keeps the title clear of the close button
+        .frame(maxWidth: .infinity)
+        .frame(height: TabMetrics.pillHeight)
+        .background {
+            if isActive {
+                SelectedPill()
+                    .matchedGeometryEffect(id: "pill", in: pill)
+            } else if hovering {
+                Capsule().fill(Color.primary.opacity(0.05))
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(alignment: .leading) {
+            if let onClose, hovering {
+                CloseTabButton(action: onClose)
+                    .padding(.leading, 5)
+                    .transition(.opacity)
+            }
+        }
+        .contentShape(Capsule())
         .onTapGesture(perform: onSelect)
-        .onHover { hovering = $0 }
+        .onHover { over in withAnimation(.easeOut(duration: 0.12)) { hovering = over } }
         .foregroundStyle(isActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .help(title)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The tab's close "×": a small circle that lights up under the pointer.
+private struct CloseTabButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(Color.primary.opacity(hovering ? 0.14 : 0)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Close tab (⌘W)")
+        .accessibilityLabel("Close tab")
+    }
+}
+
+/// "+" beside the track, in a capsule of the track's own colour so it reads
+/// as part of the bar.
+private struct NewTabButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: TabMetrics.trackHeight, height: TabMetrics.trackHeight)
+                .background(TrackBackground())
+                .overlay(Circle().fill(Color.primary.opacity(hovering ? 0.06 : 0)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("New browser tab (⌘T)")
+        .accessibilityLabel("New browser tab")
     }
 }
 

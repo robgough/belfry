@@ -129,6 +129,8 @@ struct RootView: View {
     @State private var closeTabKeyMonitor: Any?
     @State private var git: HeaderGit?
     @State private var headerLayout = HeaderLayout.full
+    /// Bumped by the paperclip button; `terminalAttachments` opens its panel.
+    @State private var attachRequest = 0
 
     private struct HeaderGit: Equatable {
         let directory: String
@@ -209,7 +211,14 @@ struct RootView: View {
                 // through (a painted toolbar put the terminal's colour above
                 // the sidebar too).
                 .toolbarBackground(.hidden, for: .windowToolbar)
-                .terminalAttachments(hosts: model.hosts, selection: selection)
+                .terminalAttachments(hosts: model.hosts, selection: selection,
+                                     openPanelRequest: attachRequest)
+                // Track the detail column's own width (inside the inspector,
+                // which takes its toolbar space with it) so the header's facts
+                // can drop out before they'd crowd the title.
+                .onGeometryChange(for: HeaderLayout.self) { HeaderLayout(width: $0.size.width) } action: {
+                    headerLayout = $0
+                }
                 // The file pane rides in an inspector so the warm terminal
                 // surfaces stay mounted beside it, never re-parented.
                 .inspector(isPresented: $showsFilePane) {
@@ -217,84 +226,8 @@ struct RootView: View {
                                     transferCenter: model.transferCenter)
                         .inspectorColumnWidth(min: 260, ideal: 320, max: 560)
                 }
-                // Track the detail width so the header's facts can drop out
-                // column by column before they'd crowd the title.
-                .onGeometryChange(for: HeaderLayout.self) { HeaderLayout(width: $0.size.width) } action: {
-                    headerLayout = $0
-                }
                 .task(id: gitPollKey) { await pollGit() }
-                .toolbar {
-                    // Branch, changes, model, context: the facts that aren't the
-                    // task, apart from the title and ahead of the buttons. Plain
-                    // text, so no glass capsule behind it.
-                    if headerLayout.showsFacts {
-                        if #available(macOS 26.0, *) {
-                            ToolbarItem(placement: .primaryAction) { headerFacts }
-                                .sharedBackgroundVisibility(.hidden)
-                        } else {
-                            ToolbarItem(placement: .primaryAction) { headerFacts }
-                        }
-                    }
-                    // The tab strip only appears once a session has web tabs,
-                    // so this is the discoverable way into the first one.
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            model.browserTabs.openTabInCurrent()
-                        } label: {
-                            Label("New Browser Tab", systemImage: "globe")
-                        }
-                        .disabled(selection == nil)
-                        .help("Open a browser tab in this session (⌘T)")
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            openWindow(id: "agents")
-                        } label: {
-                            // Belfry's own mark: the braille cell every agent
-                            // badge is drawn from.
-                            Label {
-                                Text("Agents")
-                            } icon: {
-                                Text("⣿").font(.system(size: 16, design: .monospaced))
-                            }
-                        }
-                        .help("Every agent at a glance (⇧⌘A)")
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        TransfersButton(center: model.transferCenter)
-                    }
-                    // The files inspector stands apart, as the trailing
-                    // sidebar toggle does in Finder and Xcode.
-                    if #available(macOS 26.0, *) {
-                        ToolbarSpacer(.fixed, placement: .primaryAction)
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showsFilePane.toggle()
-                        } label: {
-                            Label("Files", systemImage: "sidebar.right")
-                        }
-                        .disabled(selection == nil)
-                        .keyboardShortcut("i", modifiers: [.command, .option])
-                        .help("Browse the selected window's working directory (⌥⌘I)")
-                    }
-                }
-                // The readout that stands in for the native title (see
-                // `HeaderTitle`): badge, task and live activity in one item.
-                .toolbar {
-                    // No glass capsule behind the readout — it's a title, not
-                    // a control, and the chip was clipping against the bubble.
-                    if #available(macOS 26.0, *) {
-                        ToolbarItem(placement: .navigation) { titleReadout }
-                            .sharedBackgroundVisibility(.hidden)
-                        // Removing the native title also removes the flexible
-                        // space it brought, which let trailing items (the
-                        // paperclip) crowd in next to the readout. Reinstate it.
-                        ToolbarSpacer(.flexible)
-                    } else {
-                        ToolbarItem(placement: .navigation) { titleReadout }
-                    }
-                }
+                .toolbar { detailToolbar }
         }
         // The window title still carries the readout's first line — Mission
         // Control, the Window menu, screen sharing and VoiceOver all name the
@@ -376,6 +309,83 @@ struct RootView: View {
         }
     }
 
+    /// The detail column's toolbar, leading to trailing: the readout that
+    /// stands in for the native title, then — past a flexible space — the
+    /// facts, and the buttons in glass groups by what they act on: this
+    /// session (browser tab, attach a file, transfers), every agent, and the
+    /// files inspector, which stands apart at the trailing edge as the
+    /// inspector toggle does in Finder and Xcode. Adjacent buttons share one
+    /// glass capsule on macOS 26; the fixed spacers are what split the groups.
+    @ToolbarContentBuilder private var detailToolbar: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            // No glass capsule behind the readout or the facts — they're a
+            // title and its annotations, not controls.
+            ToolbarItem(placement: .navigation) { titleReadout }
+                .sharedBackgroundVisibility(.hidden)
+            // Removing the native title also removes the flexible space it
+            // brought; reinstate it so the trailing items stay trailing.
+            ToolbarSpacer(.flexible)
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) { titleReadout }
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.browserTabs.openTabInCurrent()
+            } label: {
+                Label("New Browser Tab", systemImage: "globe")
+            }
+            .disabled(selection == nil)
+            .help("Open a browser tab in this session (⌘T)")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                attachRequest += 1
+            } label: {
+                Label("Attach File…", systemImage: "paperclip")
+            }
+            .disabled(selection == nil)
+            .help("Send a file to this session: it's staged on the host and its path is pasted into the prompt")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            TransfersButton(center: model.transferCenter)
+        }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                openWindow(id: "agents")
+            } label: {
+                // Belfry's own mark — the braille cell every agent badge is
+                // drawn from — as a template image, so the toolbar sizes and
+                // tints it like any SF Symbol (a Text icon got a custom-view
+                // item with a glass of its own).
+                Label {
+                    Text("Agents")
+                } icon: {
+                    Image(nsImage: BrailleMark.toolbarImage)
+                }
+            }
+            .help("Every agent at a glance (⇧⌘A)")
+        }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showsFilePane.toggle()
+            } label: {
+                Label("Files", systemImage: "sidebar.right")
+            }
+            .disabled(selection == nil)
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help("Browse the selected window's working directory (⌥⌘I)")
+        }
+    }
+
     /// The visible title: the same two lines the old lozenge showed, styled
     /// like the native title/subtitle it replaces — plus the two things the
     /// native rendering can't do: a tinted machine name and the animated
@@ -388,9 +398,7 @@ struct RootView: View {
             staleWord: staleStatusWord,
             window: selectedWindow,
             agent: headerAgent,
-            folderURL: localFolderURL,
-            inlineBranch: headerLayout.showsFacts
-                ? nil : HeaderFacts.branch(git: headerGit, agent: headerAgent))
+            folderURL: localFolderURL)
     }
 
     /// The selected window's working directory, when it's on this Mac and the
@@ -457,8 +465,7 @@ struct RootView: View {
     }
 
     private var headerFacts: some View {
-        HeaderFacts(git: headerGit, agent: headerAgent,
-                    showsAgentColumn: headerLayout.showsAgentColumn)
+        HeaderFacts(git: headerGit, agent: headerAgent, layout: headerLayout)
     }
 
     /// Local windows get their working directory as the title-bar proxy icon:

@@ -22,24 +22,22 @@ struct HeaderTitle: View {
     /// The window's primary agent (nil when there's none to speak of).
     let agent: AgentPane?
     let folderURL: URL?
-    /// The branch, when the window is too narrow for `HeaderFacts` — it's the
-    /// one fact worth keeping at any width.
-    let inlineBranch: String?
-
 
     var body: some View {
         HStack(spacing: 9) {
             leading
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: HeaderMetrics.lineGap) {
                 title
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(HeaderMetrics.titleFont)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(height: HeaderMetrics.firstLine)
                 subtitle
-                    .font(.system(size: 10.5))
+                    .font(HeaderMetrics.secondFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
+                    .frame(height: HeaderMetrics.secondLine)
             }
         }
         .frame(maxWidth: 520, alignment: .leading)
@@ -100,18 +98,14 @@ struct HeaderTitle: View {
                 SettledText(value: Self.activity(agent), mode: .throttle(.milliseconds(1500)))
                     .foregroundStyle(Self.activityStyle(agent))
                     .id(window?.id)
-                AgentProgressText(agent: agent, branch: inlineBranch)
+                AgentProgressText(agent: agent)
+                    .fixedSize()
             }
         } else if let readout {
-            readout.secondaryText + branchSuffix
+            readout.secondaryText
         } else if let staleReadout {
             staleReadout.secondaryText + Text(" — \(staleWord)")
         }
-    }
-
-    private var branchSuffix: Text {
-        guard let inlineBranch else { return Text("") }
-        return Text(" · \(Image(systemName: "arrow.triangle.branch")) \(inlineBranch)")
     }
 
     /// What it's doing now, in the words the hooks reported — or the state,
@@ -146,7 +140,6 @@ struct HeaderTitle: View {
 /// a clock worth watching (busy or waiting); otherwise it's static.
 private struct AgentProgressText: View {
     let agent: AgentPane
-    let branch: String?
 
     var body: some View {
         if let since = agent.since, agent.state.isBusy || agent.state.needsAttention {
@@ -167,11 +160,7 @@ private struct AgentProgressText: View {
                 parts.append("\(agent.subagents) agent\(agent.subagents == 1 ? "" : "s")")
             }
         }
-        var text = Text(parts.map { " · \($0)" }.joined()).monospacedDigit()
-        if let branch {
-            text = text + Text(" · \(Image(systemName: "arrow.triangle.branch")) \(branch)")
-        }
-        return text
+        return Text(parts.map { " · \($0)" }.joined()).monospacedDigit()
     }
 
     /// 14 → "14s", 134 → "2m 14s", 3780 → "1h 3m".
@@ -228,15 +217,28 @@ struct SettledText: View {
     }
 }
 
+/// One vertical rhythm for everything in the header: the title and the facts
+/// beside it are separate toolbar items, each centred on its own, so their two
+/// lines only share baselines if every first line and every second line is
+/// the same height in both.
+enum HeaderMetrics {
+    static let titleFont = Font.system(size: 13, weight: .semibold)
+    static let secondFont = Font.system(size: 11)
+    static let firstLine: CGFloat = 16
+    static let secondLine: CGFloat = 14
+    static let lineGap: CGFloat = 2
+}
+
 /// The facts that aren't the task, set apart from the title as two small
-/// two-line columns that line up with it: where the code is (branch, then
-/// what's changed and how it sits against upstream) and, with an agent, what
-/// it's running on (model and effort, then context in use and permission
-/// mode). The window decides how many columns fit — see `HeaderLayout`.
+/// two-line columns whose lines sit level with its two: where the code is
+/// (branch, then what's changed and how it sits against upstream) and, with
+/// an agent, what it's running on (model and effort, then context in use and
+/// permission mode). The window decides how much fits — see `HeaderLayout` —
+/// and the branch is the one thing that stays at every width.
 struct HeaderFacts: View {
     let git: GitOverview?
     let agent: AgentPane?
-    let showsAgentColumn: Bool
+    let layout: HeaderLayout
 
     /// The repo's branch, else the one the agent's hooks reported.
     static func branch(git: GitOverview?, agent: AgentPane?) -> String? {
@@ -248,48 +250,63 @@ struct HeaderFacts: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             if let branch = Self.branch(git: git, agent: agent) {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text(branch)
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    changesLine
-                }
-                .frame(maxWidth: 220, alignment: .leading)
-                .hoverHint(branchHint(branch))
+                gitColumn(branch)
             }
-            if showsAgentColumn, let agent, Self.hasAgentFacts(agent) {
-                Divider().frame(height: 26)
-                VStack(alignment: .leading, spacing: 2) {
-                    if !agent.model.isEmpty {
-                        Text(ModelName.short(agent.model)
-                             + (agent.effort.isEmpty ? "" : " · \(agent.effort)"))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 6) {
-                        if let tokens = agent.contextTokens, tokens > 0 {
-                            ContextMeter(tokens: tokens, model: agent.model)
-                        }
-                        if let mode = ModeStyle(agent.mode) {
-                            Text(mode.label)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(mode.color)
-                        }
-                    }
-                }
+            if layout.showsAgentColumn, let agent, Self.hasAgentFacts(agent) {
+                Rectangle()
+                    .fill(.separator)
+                    .frame(width: 1, height: HeaderMetrics.firstLine + HeaderMetrics.secondLine)
+                agentColumn(agent)
             }
         }
-        .fixedSize()
+        .padding(.horizontal, 4)
     }
 
     static func hasAgentFacts(_ agent: AgentPane) -> Bool {
         !agent.model.isEmpty || (agent.contextTokens ?? 0) > 0 || ModeStyle(agent.mode) != nil
+    }
+
+    private func gitColumn(_ branch: String) -> some View {
+        VStack(alignment: .leading, spacing: HeaderMetrics.lineGap) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                // Middle truncation keeps both a prefix like "rob/" and the
+                // distinguishing tail of a long branch name.
+                Text(branch)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .modifier(WidthCap(max: layout.branchMaxWidth))
+            }
+            .frame(height: HeaderMetrics.firstLine)
+            changesLine
+                .frame(height: HeaderMetrics.secondLine)
+        }
+        .hoverHint(branchHint(branch))
+    }
+
+    private func agentColumn(_ agent: AgentPane) -> some View {
+        VStack(alignment: .leading, spacing: HeaderMetrics.lineGap) {
+            Text(ModelName.short(agent.model) + (agent.effort.isEmpty ? "" : " · \(agent.effort)"))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .frame(height: HeaderMetrics.firstLine)
+            HStack(spacing: 7) {
+                if let tokens = agent.contextTokens, tokens > 0 {
+                    ContextMeter(tokens: tokens, model: agent.model)
+                }
+                if let mode = ModeStyle(agent.mode) {
+                    Text(mode.label)
+                        .foregroundStyle(mode.color)
+                        .fixedSize()
+                }
+            }
+            .font(HeaderMetrics.secondFont)
+            .frame(height: HeaderMetrics.secondLine)
+        }
     }
 
     /// "+14 −22 · ↑2 ↓1" — the agent's diff when it reported one, else how many
@@ -310,8 +327,9 @@ struct HeaderFacts: View {
                     .compactMap { $0 }.joined(separator: " "))
             }
         }
-        .font(.system(size: 10.5).monospacedDigit())
+        .font(HeaderMetrics.secondFont.monospacedDigit())
         .foregroundStyle(.secondary)
+        .fixedSize()
     }
 
     private func branchHint(_ branch: String) -> String {
@@ -339,34 +357,86 @@ private struct ContextMeter: View {
         HStack(spacing: 5) {
             Capsule()
                 .fill(.quaternary)
-                .frame(width: 30, height: 4)
+                .frame(width: 28, height: 4)
                 .overlay(alignment: .leading) {
                     Capsule()
                         .fill(fraction > 0.8 ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
-                        .frame(width: max(3, 30 * fraction), height: 4)
+                        .frame(width: max(3, 28 * fraction), height: 4)
                 }
+            // Fixed: a toolbar item can be offered less than its ideal width,
+            // and "84k" squeezed to "…" says nothing at all.
             Text(AgentRow.compact(tokens))
-                .font(.system(size: 10.5).monospacedDigit())
+                .monospacedDigit()
                 .foregroundStyle(.secondary)
+                .fixedSize()
         }
+        .fixedSize()
         .hoverHint("\(tokens.formatted()) tokens of context in use (of \(AgentRow.compact(capacity)))")
     }
 }
 
-/// How much of the header fits the window: the facts need room beside the
-/// title and the toolbar buttons, so they drop out column by column as the
-/// window narrows, and the branch moves into the subtitle rather than vanish.
+/// Offers its content at most `max` points, even under an ideal-size
+/// proposal (which a toolbar item gets) — so a long branch truncates at the
+/// cap instead of pushing everything else out of the toolbar.
+private struct WidthCap: ViewModifier {
+    let max: CGFloat
+    func body(content: Content) -> some View {
+        CapLayout(max: max) { content }
+    }
+
+    private struct CapLayout: Layout {
+        let max: CGFloat
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            guard let child = subviews.first else { return .zero }
+            let width = Swift.min(proposal.width ?? max, max)
+            return child.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+        }
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        }
+    }
+}
+
+/// How much of the header fits the detail column: the facts need room beside
+/// the title and the toolbar buttons, so the agent's column drops out first,
+/// then the branch's cap tightens. The branch itself never goes.
 enum HeaderLayout: Equatable {
-    case full, gitOnly, compact
+    case full, git, compact
 
     init(width: CGFloat) {
         switch width {
-        case 1000...: self = .full
-        case 760...: self = .gitOnly
+        case 900...: self = .full
+        case 700...: self = .git
         default: self = .compact
         }
     }
 
-    var showsFacts: Bool { self != .compact }
     var showsAgentColumn: Bool { self == .full }
+    var branchMaxWidth: CGFloat { self == .compact ? 120 : 200 }
+}
+
+/// Belfry's mark for toolbar use: the full braille cell ⣿ every agent badge
+/// is drawn from, as a template image sized like an SF Symbol, so the toolbar
+/// tints and spaces it like the buttons around it.
+enum BrailleMark {
+    static let toolbarImage: NSImage = {
+        let size = NSSize(width: 16, height: 18)
+        let image = NSImage(size: size, flipped: true) { _ in
+            let dot: CGFloat = 3.2, pitch: CGFloat = 4.4
+            let originX = (size.width - (dot + pitch)) / 2
+            let originY = (size.height - (dot + 3 * pitch)) / 2
+            NSColor.black.setFill()
+            for column in 0..<2 {
+                for row in 0..<4 {
+                    NSBezierPath(ovalIn: NSRect(x: originX + CGFloat(column) * pitch,
+                                                y: originY + CGFloat(row) * pitch,
+                                                width: dot, height: dot)).fill()
+                }
+            }
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Agents"
+        return image
+    }()
 }

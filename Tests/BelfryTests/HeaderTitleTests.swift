@@ -47,9 +47,11 @@ struct HeaderTitleTests {
 
     @Test func factsDropOutAsTheWindowNarrows() {
         #expect(HeaderLayout(width: 1200) == .full)
-        #expect(HeaderLayout(width: 800) == .gitOnly)
+        #expect(HeaderLayout(width: 800) == .git)
         #expect(HeaderLayout(width: 600) == .compact)
-        #expect(!HeaderLayout.compact.showsFacts)
-        #expect(HeaderLayout.gitOnly.showsFacts && !HeaderLayout.gitOnly.showsAgentColumn)
+        #expect(HeaderLayout.full.showsAgentColumn)
+        #expect(!HeaderLayout.git.showsAgentColumn && !HeaderLayout.compact.showsAgentColumn)
+        // The branch never drops out; it only truncates sooner.
+        #expect(HeaderLayout.compact.branchMaxWidth < HeaderLayout.git.branchMaxWidth)
     }
 }

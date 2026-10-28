@@ -3,18 +3,23 @@ import SwiftUI
 
 extension View {
     /// Adds file-sending to the detail pane: drag-and-drop onto the terminal,
-    /// and a paperclip toolbar button with an open panel. Both stage the file
-    /// on the selected session's host (see `AttachmentStaging`) and paste its
-    /// escaped path into the terminal input — which is how Claude Code takes
-    /// images and documents.
-    func terminalAttachments(hosts: [HostModel], selection: WindowSelection?) -> some View {
-        modifier(TerminalAttachments(hosts: hosts, selection: selection))
+    /// and an open panel whenever `openPanelRequest` changes (the paperclip
+    /// toolbar button bumps it). Both stage the file on the selected session's
+    /// host (see `AttachmentStaging`) and paste its escaped path into the
+    /// terminal input — which is how Claude Code takes images and documents.
+    /// The button itself lives with the rest of the toolbar, so it can sit in
+    /// the same glass group as the other session actions.
+    func terminalAttachments(hosts: [HostModel], selection: WindowSelection?,
+                             openPanelRequest: Int) -> some View {
+        modifier(TerminalAttachments(hosts: hosts, selection: selection,
+                                     openPanelRequest: openPanelRequest))
     }
 }
 
 private struct TerminalAttachments: ViewModifier {
     let hosts: [HostModel]
     let selection: WindowSelection?
+    let openPanelRequest: Int
 
     @State private var isDropTargeted = false
     @State private var sendsInFlight = 0
@@ -47,17 +52,7 @@ private struct TerminalAttachments: ViewModifier {
             .overlay(alignment: .bottom) {
                 statusToast
             }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        presentOpenPanel()
-                    } label: {
-                        Label("Attach File…", systemImage: "paperclip")
-                    }
-                    .disabled(targetSession == nil)
-                    .help("Send a file to this session: it's staged on the host and its path is pasted into the prompt")
-                }
-            }
+            .onChange(of: openPanelRequest) { _, _ in presentOpenPanel() }
     }
 
     // MARK: Pipeline
