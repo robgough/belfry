@@ -127,6 +127,19 @@ struct RootView: View {
     @State private var lastReadout: CachedReadout?
     @State private var showsFilePane = false
     @State private var closeTabKeyMonitor: Any?
+    @State private var git: HeaderGit?
+    /// The detail column's toolbar width (inspector included), which decides
+    /// how much of the header fits.
+    @State private var detailWidth: CGFloat = 1000
+    /// The facts' own width as laid out, so the title knows what's left.
+    @State private var factsWidth: CGFloat = 0
+    /// Bumped by the paperclip button; `terminalAttachments` opens its panel.
+    @State private var attachRequest = 0
+
+    private struct HeaderGit: Equatable {
+        let directory: String
+        let overview: GitOverview
+    }
 
     private struct CachedReadout: Equatable {
         let selection: WindowSelection
@@ -164,28 +177,9 @@ struct RootView: View {
         return "reconnecting…"
     }
 
-    /// The web tab the detail pane is showing, when the selected session's
-    /// strip isn't on the terminal — the title bar shows the page, not tmux.
-    private var activeWebTab: BrowserTab? {
-        model.browserTabs.activeWebTab
-    }
-
+    /// The session, whichever tab is showing: the tab strip names the page.
     private var windowTitle: String {
-        if let tab = activeWebTab { return tab.displayTitle }
-        return readout?.primary ?? staleReadout?.primary ?? "Belfry"
-    }
-
-    /// The readout's second line, with the machine name tinted local/remote —
-    /// the reason the visible title is custom: NSWindow.subtitle is a plain
-    /// string, so a native subtitle can't carry the colour.
-    private var secondaryLine: Text? {
-        if let tab = activeWebTab {
-            guard let url = tab.url else { return nil }
-            return Text(url.absoluteString)
-        }
-        if let readout { return readout.secondaryText }
-        if let stale = staleReadout { return stale.secondaryText + Text(" — \(staleStatusWord)") }
-        return nil
+        readout?.primary ?? staleReadout?.primary ?? "Belfry"
     }
 
     @ViewBuilder private var sidebar: some View {
@@ -221,7 +215,8 @@ struct RootView: View {
                 // through (a painted toolbar put the terminal's colour above
                 // the sidebar too).
                 .toolbarBackground(.hidden, for: .windowToolbar)
-                .terminalAttachments(hosts: model.hosts, selection: selection)
+                .terminalAttachments(hosts: model.hosts, selection: selection,
+                                     openPanelRequest: attachRequest)
                 // The file pane rides in an inspector so the warm terminal
                 // surfaces stay mounted beside it, never re-parented.
                 .inspector(isPresented: $showsFilePane) {
@@ -229,61 +224,15 @@ struct RootView: View {
                                     transferCenter: model.transferCenter)
                         .inspectorColumnWidth(min: 260, ideal: 320, max: 560)
                 }
-                .toolbar {
-                    // The tab strip only appears once a session has web tabs,
-                    // so this is the discoverable way into the first one.
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            model.browserTabs.openTabInCurrent()
-                        } label: {
-                            Label("New Browser Tab", systemImage: "globe")
-                        }
-                        .disabled(selection == nil)
-                        .help("Open a browser tab in this session (⌘T)")
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            openWindow(id: "agents")
-                        } label: {
-                            Label("Agents", systemImage: "list.bullet.rectangle")
-                        }
-                        .help("Every agent at a glance (⇧⌘A)")
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        TransfersButton(center: model.transferCenter)
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showsFilePane.toggle()
-                        } label: {
-                            Label("Files", systemImage: "folder")
-                        }
-                        .disabled(selection == nil)
-                        .keyboardShortcut("i", modifiers: [.command, .option])
-                        .help("Browse the selected window's working directory (⌥⌘I)")
-                    }
+                // Track the width the detail's toolbar spans — the inspector's
+                // too, since the trailing items move over it when it opens —
+                // so the header's facts can drop out before they'd crowd the
+                // title.
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    detailWidth = $0
                 }
-                // The jump bar (a menu of every window on every host) and the
-                // now-playing readout that stands in for the native title:
-                // title-styled two-line text with the host name tinted and the
-                // live Claude chip inside the same item, so badge and label
-                // share one toolbar bubble instead of the chip floating in its
-                // own glass capsule.
-                .toolbar {
-                    ToolbarItem(placement: .navigation) { windowSwitcher }
-                    // No glass capsule behind the readout — it's a title, not
-                    // a control, and the chip was clipping against the bubble.
-                    if #available(macOS 26.0, *) {
-                        ToolbarItem(placement: .navigation) { titleReadout }
-                            .sharedBackgroundVisibility(.hidden)
-                        // Removing the native title also removes the flexible
-                        // space it brought, which let trailing items (the
-                        // paperclip) crowd in next to the readout. Reinstate it.
-                        ToolbarSpacer(.flexible)
-                    } else {
-                        ToolbarItem(placement: .navigation) { titleReadout }
-                    }
-                }
+                .task(id: gitPollKey) { await pollGit() }
+                .toolbar { detailToolbar }
         }
         // The window title still carries the readout's first line — Mission
         // Control, the Window menu, screen sharing and VoiceOver all name the
@@ -365,62 +314,117 @@ struct RootView: View {
         }
     }
 
+    /// The detail column's toolbar, leading to trailing: the readout that
+    /// stands in for the native title, then — past a flexible space — the
+    /// facts, and the buttons in glass groups by what they act on: this
+    /// session (browser tab, attach a file, transfers), every agent, and the
+    /// files inspector, which stands apart at the trailing edge as the
+    /// inspector toggle does in Finder and Xcode. Adjacent buttons share one
+    /// glass capsule on macOS 26; the fixed spacers are what split the groups.
+    @ToolbarContentBuilder private var detailToolbar: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            // No glass capsule behind the readout or the facts — they're a
+            // title and its annotations, not controls.
+            ToolbarItem(placement: .navigation) { titleReadout }
+                .sharedBackgroundVisibility(.hidden)
+            // Removing the native title also removes the flexible space it
+            // brought; reinstate it so the trailing items stay trailing.
+            ToolbarSpacer(.flexible)
+        } else {
+            ToolbarItem(placement: .navigation) { titleReadout }
+        }
+        factsItem
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.browserTabs.openTabInCurrent()
+            } label: {
+                Label("New Browser Tab", systemImage: "globe")
+            }
+            .disabled(selection == nil)
+            .help("Open a browser tab in this session (⌘T)")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                attachRequest += 1
+            } label: {
+                Label("Attach File…", systemImage: "paperclip")
+            }
+            .disabled(selection == nil)
+            .help("Send a file to this session: it's staged on the host and its path is pasted into the prompt")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            TransfersButton(center: model.transferCenter)
+        }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                openWindow(id: "agents")
+            } label: {
+                // Belfry's own mark — the braille cell every agent badge is
+                // drawn from — as a template image, so the toolbar sizes and
+                // tints it like any SF Symbol (a Text icon got a custom-view
+                // item with a glass of its own).
+                Label {
+                    Text("Agents")
+                } icon: {
+                    Image(nsImage: BrailleMark.toolbarImage)
+                }
+            }
+            .help("Every agent at a glance (⇧⌘A)")
+        }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showsFilePane.toggle()
+            } label: {
+                Label("Files", systemImage: "sidebar.right")
+            }
+            .disabled(selection == nil)
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help("Browse the selected window's working directory (⌥⌘I)")
+        }
+    }
+
+    /// The facts, as a different toolbar item for each layout. An
+    /// NSToolbarItem grows with its SwiftUI content but doesn't shrink back:
+    /// one item across layouts kept the agent column's width after the
+    /// column dropped out on a narrowing window, leaving a gap and pushing
+    /// the buttons into the » menu. A new item per layout is measured fresh.
+    @ToolbarContentBuilder private var factsItem: some ToolbarContent {
+        switch headerLayout {
+        case .full:
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+                .hidingSharedBackground()
+        case .git:
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+                .hidingSharedBackground()
+        case .compact:
+            ToolbarItem(placement: .primaryAction) { headerFacts }
+                .hidingSharedBackground()
+        }
+    }
+
     /// The visible title: the same two lines the old lozenge showed, styled
     /// like the native title/subtitle it replaces — plus the two things the
     /// native rendering can't do: a tinted machine name and the animated
     /// Claude chip in the same bubble. Local windows keep the proxy-icon
     /// affordance as a draggable folder icon.
     private var titleReadout: some View {
-        HStack(spacing: 8) {
-            if activeWebTab != nil {
-                // Browsing: the title is the page, so the cwd folder icon
-                // would mislead — but the Claude chip stays (glanceable
-                // session state is exactly why the browser lives in a tab).
-                Image(systemName: "globe")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            } else if let url = localFolderURL {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                    .resizable()
-                    .frame(width: 17, height: 17)
-                    .onDrag { NSItemProvider(object: url as NSURL) }
-                    .hoverHint("Working directory — drag to copy the folder")
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(windowTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let secondaryLine {
-                    secondaryLine
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            if let agent = readout?.agent {
-                AgentBadge(state: agent.state, kind: agent.kind, title: agent.name,
-                           unseen: agent.unseen)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        // The LCD: the old lozenge's rounded panel, drawn ourselves (the
-        // system glass capsule is hidden) so it reads as a readout, not a
-        // button, and the chip gets real padding instead of clipping.
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(AppTheme.sidebarPanel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 1)
-        )
-        .frame(maxWidth: 460)
-        .fixedSize(horizontal: false, vertical: true)
-        .hoverHint((readout ?? staleReadout)?.hint ?? "")
-        .accessibilityElement(children: .combine)
+        HeaderTitle(
+            readout: readout,
+            staleReadout: staleReadout,
+            staleWord: staleStatusWord,
+            window: selectedWindow,
+            agent: headerAgent,
+            folderURL: localFolderURL,
+            maxWidth: titleMaxWidth)
     }
 
     /// The selected window's working directory, when it's on this Mac and the
@@ -433,51 +437,80 @@ struct RootView: View {
         return URL(fileURLWithPath: current.currentPath)
     }
 
-    /// The jump bar: a menu of every window on every host, labelled with the
-    /// selected window's live Claude chip (a plain stack icon when Claude
-    /// isn't running there). A Picker gives the native checkmark on the
-    /// current window; choosing another entry is exactly a sidebar click.
-    private var windowSwitcher: some View {
-        Menu {
-            Picker("Window", selection: $selection) {
-                ForEach(model.hosts) { host in
-                    if !host.store.sessions.isEmpty {
-                        Section(host.displayName) {
-                            ForEach(host.store.sessions) { session in
-                                ForEach(session.windows) { window in
-                                    Text(switcherLabel(session: session, window: window))
-                                        .tag(Optional(WindowSelection(hostID: host.id, windowID: window.id)))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            if model.hosts.allSatisfy({ $0.store.sessions.isEmpty }) {
-                Text("No windows")
-            }
-        } label: {
-            Image(systemName: "rectangle.stack")
+    /// The selected window itself, joined against live tmux state.
+    private var selectedWindow: TmuxWindow? {
+        guard let sel = selection, let host = selectedHost else { return nil }
+        for session in host.store.sessions {
+            if let window = session.windows.first(where: { $0.id == sel.windowID }) { return window }
         }
-        .hoverHint("Jump to a window")
+        return nil
     }
 
-    private func switcherLabel(session: TmuxSession, window: TmuxWindow) -> String {
-        let name = window.name.isEmpty ? "window \(window.index)" : window.name
-        var label = name == session.name ? name : "\(session.name) · \(name)"
-        // Live agent state as a plain word — menu items can't carry the
-        // coloured braille chip.
-        switch window.agentState {
-        case .none, .running: break
-        case .working:    label += " — working"
-        case .background: label += " — background"
-        case .idle:       label += " — idle"
-        case .waiting:    label += " — waiting"
-        case .error:      label += " — error"
+    /// Re-runs the git poll whenever the window, its directory, or its agent's
+    /// state changes — a turn ending is exactly when the branch or the
+    /// working tree is likely to have moved.
+    private var gitPollKey: String? {
+        guard let sel = selection, let window = selectedWindow, !window.currentPath.isEmpty
+        else { return nil }
+        return "\(sel.hostID)|\(window.currentPath)|\(window.agentState)"
+    }
+
+    /// The selected window's repo overview for the header: fetched at once,
+    /// then refreshed on a slow timer (slower over ssh). Kept per directory,
+    /// so switching windows never shows the previous one's branch.
+    private func pollGit() async {
+        guard let host = selectedHost, let window = selectedWindow,
+              let browser = host.transport.makeFileBrowser()
+        else { git = nil; return }
+        let directory = "\(host.id)|\(window.currentPath)"
+        if git?.directory != directory { git = nil }
+        let interval: Duration = host.transport.isLocal ? .seconds(10) : .seconds(30)
+        while !Task.isCancelled {
+            let overview = (try? await browser.gitOverview(directory: window.currentPath)) ?? nil
+            guard !Task.isCancelled else { return }
+            git = overview.map { HeaderGit(directory: directory, overview: $0) }
+            try? await Task.sleep(for: interval)
         }
-        return label
+    }
+
+    /// The selected window's primary agent, when it has one worth showing
+    /// (or the staged demo agent in debug builds).
+    private var headerAgent: AgentPane? {
+        #if DEBUG
+        if let demo = HeaderDemo.agent { return demo }
+        #endif
+        guard let agent = selectedWindow?.primaryAgent, agent.state != .none else { return nil }
+        return agent
+    }
+
+    private var headerGit: GitOverview? {
+        #if DEBUG
+        if let demo = HeaderDemo.git { return demo }
+        #endif
+        return git?.overview
+    }
+
+    private var headerLayout: HeaderLayout { HeaderLayout(width: detailWidth) }
+
+
+    /// What's left for the title once the trailing items have their room.
+    /// NSToolbar gives a SwiftUI item its ideal width and, when the row runs
+    /// out, pushes whole items into the » menu rather than squeezing any —
+    /// so without a cap a long task title shoved the branch and every
+    /// button off the toolbar on a narrow window. Capped, the title truncates
+    /// instead. The buttons' width is AppKit's to decide, so it's measured
+    /// off the toolbar once (four glass buttons in three groups, plus the
+    /// transfers button while it shows).
+    private var titleMaxWidth: CGFloat {
+        let buttons: CGFloat = 176 + (model.transferCenter.transfers.isEmpty ? 0 : 38)
+        // leading inset, a breath before the facts, trailing edge
+        let gaps: CGFloat = 28 + HeaderMetrics.leadingInset
+        return max(140, detailWidth - factsWidth - buttons - gaps)
+    }
+
+    private var headerFacts: some View {
+        HeaderFacts(git: headerGit, agent: headerAgent, layout: headerLayout)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { factsWidth = $0 }
     }
 
     /// Local windows get their working directory as the title-bar proxy icon:
@@ -533,6 +566,18 @@ struct RootView: View {
             Image(systemName: "plus")
         }
         .menuIndicator(.hidden)
+    }
+}
+
+private extension ToolbarContent {
+    /// No glass capsule behind an item that isn't a control (macOS 26+).
+    @ToolbarContentBuilder
+    func hidingSharedBackground() -> some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
     }
 }
 
