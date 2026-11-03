@@ -460,9 +460,26 @@ open BelfryiOS.xcodeproj  <span class="c"># set your team, run</span></pre>
   }, { rootMargin: "-40% 0px -55% 0px" });
   document.querySelectorAll("section[id]").forEach(s => observer.observe(s));
 
+  // fathom.trackEvent is the current events API; the event is created on
+  // first fire. It beacons, and Safari drops that beacon if the tab navigates
+  // in the same turn, so a same-tab click waits a beat. No window.fathom
+  // (script blocked) leaves the link alone.
   document.querySelectorAll("a[data-fathom-event]").forEach(a =>
-    a.addEventListener("click", () => {
-      if (window.fathom) window.fathom.trackEvent(a.dataset.fathomEvent);
+    a.addEventListener("click", (event) => {
+      let sent = false;
+      try {
+        if (window.fathom && typeof window.fathom.trackEvent === "function") {
+          window.fathom.trackEvent(a.dataset.fathomEvent);
+          sent = true;
+        }
+      } catch (_) { /* blocked or threw; don't stop the download */ }
+      const sameTab = sent && event.button === 0 && !event.metaKey && !event.ctrlKey
+        && !event.shiftKey && !event.altKey && a.target !== "_blank"
+        && !event.defaultPrevented;
+      if (!sameTab) return;
+      event.preventDefault();
+      const href = a.href;
+      setTimeout(() => { location.href = href; }, 200);
     }));
 </script>
 
